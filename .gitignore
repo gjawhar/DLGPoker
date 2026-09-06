@@ -1,0 +1,6 @@
+# Ethos on-device data files -- generated at runtime, never shipped
+**/Files/*.csv
+*.tmp
+
+# OS cruft
+.DS_Store
