@@ -1,14 +1,14 @@
 # DLG Poker — project context for Claude Code
 
-Two FrSky Ethos Lua scripts developed together over an extensive session of
-real-hardware debugging:
+**`PokerTimer/`** — "DLG Poker", the pilot-facing app. A launch-height
+poker practice timer for the F3K "Poker" task (bet a time, launch, land as
+close to (or past) your bet as possible, score the bet if you make it).
 
-- **`PokerTimer/`** — "DLG Poker", the actual pilot-facing app. A launch-height
-  poker practice timer for the F3K "Poker" task (bet a time, launch, land as
-  close to (or past) your bet as possible, score the bet if you make it).
-- **`PokerProbe/`** — a standalone diagnostic tool, built specifically to
-  bench-test uncertain Ethos Lua API behavior *before* relying on it in
-  DLG Poker. Most of the hard-won knowledge below came from this tool.
+Developed alongside `PokerProbe/`, a standalone diagnostic tool built to
+bench-test uncertain Ethos Lua API behavior before relying on it here — most
+of the hard-won knowledge below came from it. **Removed** once its findings
+were folded into this app and confirmed stable; see git history (and the
+Requirements Spec) to resurrect it for future bench work.
 
 Full history, every bench-test result, and the complete rationale for every
 design decision is in `DLG_Poker_Timer___Requirements_Specification.md`. This
@@ -26,7 +26,6 @@ recent, most likely to still be relevant.
 ```
 PokerTimer/       -- the app: main.lua, core.lua, screen.lua, config.lua,
                      draw.lua, pokertimer.png (system tool icon)
-PokerProbe/       -- the diagnostic tool: main.lua, probe.lua, pokerprobe.png
 harness/          -- test.lua (56+ tests) + core.lua (a SYNCED COPY of
                      PokerTimer/core.lua -- see workflow below)
 DLG_Poker_Timer___Requirements_Specification.md
@@ -169,8 +168,7 @@ scripts/PokerTimer/
                              Poker Probe's own missing Files/ folder caused
                              a long, misleading debugging detour
 ```
-Same structure for `scripts/PokerProbe/`. Zip from a directory containing
-`scripts/`, not from inside it.
+Zip from a directory containing `scripts/`, not from inside it.
 
 Install is a **merge/overwrite**, not delete-then-extract — deleting the
 whole `PokerTimer/` folder first would take `Files/games.csv` etc. with it.
