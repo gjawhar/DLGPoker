@@ -11,6 +11,18 @@ local screen = {}
 local SCREEN = core.SCREEN
 local inForm = false
 
+-- Touch double-fire workaround: a single tap on a touch-capable radio
+-- delivers TWO event() calls (press, then release) with no reliable
+-- value/category signal telling them apart -- confirmed on the X20RS
+-- simulator in this project's sibling ThrowTrainer widget, where an
+-- unpaired hit-test toggled a key on and immediately back off from one
+-- tap. Fix: treat the first touch call on a key as the action and
+-- unconditionally swallow the very next touch call, regardless of where
+-- it lands or what state the first call changed. See the swallow check
+-- at the very top of screen.event() below for why it must run before
+-- the inForm gate specifically.
+local touchConsuming = false
+
 -- Touch support (X20RS and other touch-capable radios): tap the on-screen
 -- keys directly instead of routing through the rotary + FS switches. Same
 -- heuristic already confirmed working in this project's own Poker Probe --
@@ -31,6 +43,64 @@ end
 -- already uses for rotary+enter, so a tap and a rotary-select land on
 -- exactly the same action.
 local keyRects = {}
+
+-- Hit-test rectangles for on-screen stepper buttons (MIN-/MIN+/SEC-/SEC+,
+-- SETUP and LIVE) -- separate from keyRects because these sit in the
+-- content area, not the footer row, and each one calls a bump function
+-- directly rather than activate(). Rebuilt every paint() (not per-screen,
+-- since screen.paint() clears it once up front) so switching screens
+-- can't leave a stale hit zone from whatever was on screen before.
+local valueRects = {}
+
+-- Tap-to-edit (pilot request, 2026-09): the footer MIN/SEC keys and FS1/
+-- FS2 can only count UP -- there was no touch-only way to walk a value
+-- back down short of the hold-to-reset gesture, which zeros the field
+-- outright rather than nudging it. Tried native form fields first
+-- (form.addNumberField, then form.addTimeField) -- both forced a
+-- full-screen form takeover (form.clear() replaces the whole SETUP/LIVE
+-- screen; Ethos's Dialog class has no documented way to embed a field for
+-- an in-place overlay instead), which the pilot didn't want. Then a
+-- compact text +/- row, which worked but wasn't the look the pilot
+-- wanted. Landed on real drawn arrows via lcd.drawFilledTriangle
+-- (confirmed present in the Ethos lcd namespace reference, signature
+-- x1,y1,x2,y2,x3,y3, no color arg -- color comes from lcd.color()/
+-- draw.color() beforehand, same as every other lcd.draw* call already in
+-- this file) rather than a Unicode arrow glyph, so the shape doesn't
+-- depend on font glyph coverage the way the suit symbols above do.
+--
+-- One column = an up triangle, a label ("MINUTES"/"SECONDS"), and a down
+-- triangle, stacked. Same column used on both SETUP (flanking the WINDOW
+-- value) and LIVE (flanking the MIN:SEC box group) -- minutes column to
+-- the left of the time indicator, seconds column to the right, per the
+-- pilot's explicit layout request.
+local ARROW_COL_W = 64
+local ARROW_W, ARROW_H = 40, 28
+local ARROW_GAP = 4
+local ARROW_LABEL_H = 14
+local ARROW_COL_TOTAL_H = ARROW_H + ARROW_GAP + ARROW_LABEL_H + ARROW_GAP + ARROW_H
+
+local function drawArrowStepper(t, x, y, label, upFn, downFn)
+  local cx = x + math.floor(ARROW_COL_W / 2)
+  local halfW = math.floor(ARROW_W / 2)
+
+  draw.color(t.accent)
+  lcd.drawFilledTriangle(cx, y, cx - halfW, y + ARROW_H, cx + halfW, y + ARROW_H)
+
+  lcd.font(FONT_S)
+  draw.color(t.dim)
+  local labelY = y + ARROW_H + ARROW_GAP
+  local lw = lcd.getTextSize(label)
+  draw.text(x + math.floor((ARROW_COL_W - lw) / 2), labelY, label)
+
+  local downY = labelY + ARROW_LABEL_H + ARROW_GAP
+  draw.color(t.accent)
+  lcd.drawFilledTriangle(cx - halfW, downY, cx + halfW, downY, cx, downY + ARROW_H)
+
+  if isTouchCapable() then
+    valueRects[#valueRects + 1] = { x = x, y = y, w = ARROW_COL_W, h = ARROW_H, action = upFn }
+    valueRects[#valueRects + 1] = { x = x, y = downY, w = ARROW_COL_W, h = ARROW_H, action = downFn }
+  end
+end
 
 -- Physical FS1-FS4 sit ABOVE the touchscreen on the X14 (confirmed by
 -- photo, x14_switch_mapping.png), not below it. The on-screen key row is
@@ -101,40 +171,91 @@ local function paintSetup(w, h)
   end
 
   cy = cy + 40
-  -- True centred-pair-with-gap layout, matching the mockup's flex
-  -- centering, rather than fixed offsets from the midpoint -- each column
-  -- is sized to its own widest content (label or value) so short/long
-  -- values (e.g. "3" vs "10:00") don't throw off the pairing.
   local windowStr = draw.mmss(core.S.setupWindow)
   local betsStr = tostring(core.S.setupBets)
-  lcd.font(FONT_S)
-  local labelWindowW, labelBetsW = lcd.getTextSize("WINDOW"), lcd.getTextSize("BETS")
-  lcd.font(FONT_XL)
-  local valWindowW, valBetsW = lcd.getTextSize(windowStr), lcd.getTextSize(betsStr)
-  local col1W = math.max(labelWindowW, valWindowW)
-  local col2W = math.max(labelBetsW, valBetsW)
-  local gap = 48
-  local col1X = math.floor((w - (col1W + gap + col2W)) / 2)
-  local col2X = col1X + col1W + gap
 
-  lcd.font(FONT_S)
-  draw.color(t.dim2)
-  draw.text(col1X, cy, "WINDOW")
-  draw.text(col2X, cy, "BETS")
-  cy = cy + 16
-  lcd.font(FONT_XL)
-  draw.color(t.txt)
-  draw.text(col1X, cy, windowStr)
-  draw.text(col2X, cy, betsStr)
+  if isTouchCapable() then
+    -- WINDOW gets its own centred row, flanked by big MINUTES/SECONDS
+    -- arrow columns (pilot request, 2026-09) -- minutes to the left of
+    -- the time indicator, seconds to the right. BETS moves to its own
+    -- simpler row below since it isn't a duration and wasn't part of
+    -- this request; it still only changes via the footer BETS key.
+    lcd.font(FONT_S)
+    draw.color(t.dim2)
+    local windowLbl = "WINDOW"
+    draw.text(math.floor((w - lcd.getTextSize(windowLbl)) / 2), cy, windowLbl)
+    cy = cy + 16
 
-  cy = h - 60
-  lcd.font(FONT_S)
-  draw.color(t.dim)
-  local hint = "FS1/FS2 adjust window (hold=0) - FS3 picks bets - FS4 deals you in"
-  draw.text(6, cy, hint, w - 12)
-  cy = cy + 16
-  draw.color(t.dim)
-  draw.text(6, cy, "rotate to CONFIG, bottom right", w * 0.6)
+    lcd.font(FONT_XL)
+    local valWindowW = lcd.getTextSize(windowStr)
+    local _, valH = lcd.getTextSize("0")
+    valH = (valH and valH > 0) and valH or 28
+
+    local rowGap = 14
+    local totalRowW = ARROW_COL_W + rowGap + valWindowW + rowGap + ARROW_COL_W
+    local minColX = math.floor((w - totalRowW) / 2)
+    local valueX = minColX + ARROW_COL_W + rowGap
+    local secColX = valueX + valWindowW + rowGap
+
+    draw.color(t.txt)
+    draw.text(valueX, cy, windowStr)
+
+    local colY = cy + math.floor(valH / 2) - math.floor(ARROW_COL_TOTAL_H / 2)
+    drawArrowStepper(t, minColX, colY, "MINUTES", core.bumpMin, core.bumpMinDown)
+    drawArrowStepper(t, secColX, colY, "SECONDS", core.bumpSec, core.bumpSecDown)
+
+    -- Arrow columns (ARROW_COL_TOTAL_H) are taller than the value text
+    -- (valH), so their bottom edge is what determines where BETS starts.
+    cy = colY + ARROW_COL_TOTAL_H + 24
+
+    lcd.font(FONT_S)
+    draw.color(t.dim2)
+    local betsLbl = "BETS"
+    draw.text(math.floor((w - lcd.getTextSize(betsLbl)) / 2), cy, betsLbl)
+    cy = cy + 16
+    lcd.font(FONT_XL)
+    draw.color(t.txt)
+    draw.text(math.floor((w - lcd.getTextSize(betsStr)) / 2), cy, betsStr)
+
+    cy = h - 40
+    lcd.font(FONT_S)
+    draw.color(t.dim)
+    draw.text(6, cy, "tap BETS above to cycle - CONFIG bottom right", w - 12)
+  else
+    -- True centred-pair-with-gap layout, matching the mockup's flex
+    -- centering, rather than fixed offsets from the midpoint -- each
+    -- column is sized to its own widest content (label or value) so
+    -- short/long values (e.g. "3" vs "10:00") don't throw off the
+    -- pairing.
+    lcd.font(FONT_S)
+    local labelWindowW, labelBetsW = lcd.getTextSize("WINDOW"), lcd.getTextSize("BETS")
+    lcd.font(FONT_XL)
+    local valWindowW, valBetsW = lcd.getTextSize(windowStr), lcd.getTextSize(betsStr)
+    local col1W = math.max(labelWindowW, valWindowW)
+    local col2W = math.max(labelBetsW, valBetsW)
+    local gap = 48
+    local col1X = math.floor((w - (col1W + gap + col2W)) / 2)
+    local col2X = col1X + col1W + gap
+
+    lcd.font(FONT_S)
+    draw.color(t.dim2)
+    draw.text(col1X, cy, "WINDOW")
+    draw.text(col2X, cy, "BETS")
+    cy = cy + 16
+    lcd.font(FONT_XL)
+    draw.color(t.txt)
+    draw.text(col1X, cy, windowStr)
+    draw.text(col2X, cy, betsStr)
+
+    cy = h - 60
+    lcd.font(FONT_S)
+    draw.color(t.dim)
+    local hint = "FS1/FS2 adjust window (hold=0) - FS3 picks bets - FS4 deals you in"
+    draw.text(6, cy, hint, w - 12)
+    cy = cy + 16
+    draw.color(t.dim)
+    draw.text(6, cy, "rotate to CONFIG, bottom right", w * 0.6)
+  end
 end
 
 -- ---------------------------------------------------------------- S2 live
@@ -196,15 +317,23 @@ local function paintLive(w, h)
     draw.text(colonX, cy, ":")
     draw.text(secX, cy, secStr)
 
-    -- Captions centred under their OWN digit group -- previously computed
-    -- from a stale cursor position left over from drawing the digits
-    -- above, which put both captions bunched together near the seconds
-    -- box instead of each under its own box.
-    lcd.font(FONT_S)
-    draw.color(t.dim)
-    local capMin, capSec = "FS1 MIN", "FS2 SEC"
-    draw.text(minX + math.floor((minW - lcd.getTextSize(capMin)) / 2), cy + boxH + 6, capMin)
-    draw.text(secX + math.floor((secW - lcd.getTextSize(capSec)) / 2), cy + boxH + 6, capSec)
+    -- Touch pilots get MINUTES/SECONDS arrow columns flanking the box
+    -- group (pilot request, 2026-09) -- minutes to the left of the min
+    -- box, seconds to the right of the sec box, both vertically centred
+    -- on the box row. Everyone else keeps the original FS1/FS2 captions,
+    -- centred under their OWN digit group as before.
+    if isTouchCapable() then
+      local rowGap = 14
+      local colY = (cy - 4) + math.floor(boxH / 2) - math.floor(ARROW_COL_TOTAL_H / 2)
+      drawArrowStepper(t, minX - rowGap - ARROW_COL_W, colY, "MINUTES", core.bumpMin, core.bumpMinDown)
+      drawArrowStepper(t, secX + secW + rowGap, colY, "SECONDS", core.bumpSec, core.bumpSecDown)
+    else
+      lcd.font(FONT_S)
+      draw.color(t.dim)
+      local capMin, capSec = "FS1 MIN", "FS2 SEC"
+      draw.text(minX + math.floor((minW - lcd.getTextSize(capMin)) / 2), cy + boxH + 6, capMin)
+      draw.text(secX + math.floor((secW - lcd.getTextSize(capSec)) / 2), cy + boxH + 6, capSec)
+    end
   elseif g.allInPending then
     lcd.font(FONT_XL)
     draw.color(t.cardRed)
@@ -563,6 +692,10 @@ end
 
 function screen.paint(w, h)
   if inForm then return end   -- form owns painting while open
+  valueRects = {}   -- cleared every dispatched paint, not just SETUP/LIVE's
+                     -- own -- otherwise a stale rect from whichever screen
+                     -- was last shown would keep intercepting taps on a
+                     -- screen (SUMMARY/LOG) that never repopulates it.
   local scr = core.S.screen
   -- Wrapped defensively -- confirmed a real bug (CONFIRM reachable on
   -- SUMMARY/LOG, corrupting bet data) via code review after a hard Ethos
@@ -617,6 +750,17 @@ local function activate(scr, i)
 end
 
 function screen.event(value, x, y)
+  -- Must run before EVERY other gate, including inForm -- activate() can
+  -- itself flip inForm true (CONFIG key) or change core.S.screen (VIEW
+  -- GAME LOG, NEW GAME, BACK). If this swallow check were nested inside
+  -- the inForm branch below, the release half of a tap that just opened
+  -- the form would arrive with inForm already true and fall through to
+  -- "let the form own everything else" unswallowed.
+  if touchConsuming and isTouchCapable() and x and y and x > 0 and y > 0 then
+    touchConsuming = false
+    return true
+  end
+
   if inForm then
     if value == KEY_RTN_FIRST or value == KEY_EXIT_FIRST or value == 99 then
       form.clear()
@@ -628,17 +772,30 @@ function screen.event(value, x, y)
 
   local scr = core.S.screen
 
-  -- Touch: hit-test against the rectangles paintKeys() recorded this same
-  -- frame. Same caveat already documented in this project's Poker Probe --
-  -- what a genuine touch event reports for `category` is unconfirmed, so
-  -- this deliberately keys off raw x/y rather than category, gated by the
-  -- touch-capable board check so it can never activate on an X14 even if
-  -- a stray event arrives.
+  -- Touch: hit-test against the rectangles paintKeys()/paintSetup()/
+  -- paintLive() recorded this same frame. Same caveat already documented
+  -- in this project's Poker Probe -- what a genuine touch event reports
+  -- for `category` is unconfirmed, so this deliberately keys off raw x/y
+  -- rather than category, gated by the touch-capable board check so it
+  -- can never activate on an X14 even if a stray event arrives.
+  --
+  -- valueRects checked first: it's the more specific target (the +/-
+  -- stepper buttons), and a button can sit close to other content, so
+  -- resolving it before the footer keyRects avoids any ambiguity if the
+  -- two ever overlapped.
   if isTouchCapable() and x and y and x > 0 and y > 0 then
+    for _, r in ipairs(valueRects) do
+      if x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h then
+        r.action()
+        touchConsuming = true
+        return true
+      end
+    end
     for i, r in pairs(keyRects) do
       if x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h then
         focus[scr] = i
         activate(scr, i)
+        touchConsuming = true
         return true
       end
     end

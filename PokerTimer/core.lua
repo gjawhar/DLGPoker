@@ -496,6 +496,16 @@ end
 function core.bumpMin() adjustTarget(1, 0) end
 function core.bumpSec() adjustTarget(0, 10) end
 
+-- Decrement counterparts (pilot request, 2026-09): FS1/FS2 and the
+-- footer MIN/SEC keys can only count up -- a touch pilot had no way to
+-- walk a value back down short of the hold-to-reset gesture, which zeros
+-- the whole field rather than nudging it. adjustTarget already takes a
+-- signed delta and applies the same SETUP-vs-bet-edit dispatch and floor
+-- (0, or SETUP's 60s) either way, so these are just the negative calls --
+-- no new clamping logic needed.
+function core.bumpMinDown() adjustTarget(-1, 0) end
+function core.bumpSecDown() adjustTarget(0, -10) end
+
 -- Hold-to-reset (S5.1): zero whichever field +MIN/+SEC currently affects.
 -- Split into two, one per field (Defect 3): holding +MIN must zero only
 -- the minutes portion, leaving seconds untouched, and vice versa for
