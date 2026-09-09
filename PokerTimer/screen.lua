@@ -523,11 +523,23 @@ local function paintLive(w, h)
     -- Attempt count, shown once at least one real launch has happened --
     -- this is what explains CANCEL disappearing from the footer (only
     -- available before the first real attempt): without this, the pilot
-    -- has no way to see why it vanished.
+    -- has no way to see why it vanished. Wording made explicit (pilot
+    -- question, 2026-09: "is this per-bet or a game total?") -- bet.attempts
+    -- already WAS per-bet all along (newBet() starts every bet at 0,
+    -- see core.lua), this was purely a label-clarity gap, not a data
+    -- model change. Bumped to a bigger, bad-colored line specifically on
+    -- a BUST, since that's the exact moment a pilot needs this number to
+    -- decide whether to retry -- a small dim line was easy to miss right
+    -- when it mattered most.
     if bet.attempts > 0 then
-      lcd.font(FONT_S)
-      draw.color(t.dim)
-      local at = string.format("attempt %d", bet.attempts)
+      local at = string.format("Attempt %d on this bet", bet.attempts)
+      if bet.result == "bust" then
+        lcd.font(FONT_M)
+        draw.color(t.bad)
+      else
+        lcd.font(FONT_S)
+        draw.color(t.dim)
+      end
       draw.text(math.floor((w - lcd.getTextSize(at)) / 2), attemptY, at)
     end
   end

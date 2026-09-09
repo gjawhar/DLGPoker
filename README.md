@@ -46,7 +46,9 @@ voice announcements well.
      "BET N: HIT +Ns credited" right alongside it. No extra button press.
    - Timer still counting → **Bust** — the bet stays locked, and
      launching again (**Retry**) restarts the same countdown with no
-     extra button press needed.
+     extra button press needed. The Bust screen shows **"Attempt N on
+     this bet"** — that count is per-bet, not a running total for the
+     game: it resets to 0 the moment you move on to the next bet.
    - Landed without braking (e.g. overshot on a downwind leg and just ran
      it in), or the launch switch gets touched again before a landing was
      ever detected at all — even by accident, e.g. mid-flight after
