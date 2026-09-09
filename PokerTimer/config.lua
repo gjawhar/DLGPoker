@@ -75,7 +75,28 @@ function config.build()
   line = panel:addLine("Target timer")
   form.addTextField(line, nil,
     function() return cfg().timerName end,
-    function(v) cfg().timerName = v core.saveConfig() end)
+    -- Takes effect immediately now (pilot request, 2026-09) -- this used
+    -- to only save the name, not re-resolve, so retyping the CORRECT
+    -- current name here silently didn't fix anything until the next
+    -- restart. Same pattern switchField() already uses for FS1-4 names.
+    function(v) cfg().timerName = v core.saveConfig() core.resolveTimerNow() end)
+
+  line = panel:addLine("Status")
+  form.addStaticText(line, nil, core.timerMissing()
+    and ("NOT FOUND: \"" .. tostring(cfg().timerName) .. "\" -- see below")
+    or "Resolved OK")
+
+  line = panel:addLine("Rename back to default")
+  form.addButton(line, nil, { text = "Use \"" .. core.defaults().timerName .. "\" again", press = function()
+    -- Only acts on the CURRENTLY-RESOLVED timer (pilot request, 2026-09:
+    -- "can you have the lua change the name back") -- if Target timer
+    -- above isn't resolved yet, fix that first (retype it to the
+    -- timer's actual current name); this then renames THAT timer back
+    -- to the default and points Target timer at it again.
+    core.renameTimerToDefault()
+    return true
+  end })
+
   line = panel:addLine("REQUIRED one-time setup")
   form.addStaticText(line, nil,
     "In SYSTEM > TIMERS, set this timer's Start condition to Always. " ..

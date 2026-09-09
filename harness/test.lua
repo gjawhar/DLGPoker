@@ -37,7 +37,7 @@ system = {
 -- that apart from a no-argument getter call.
 local fakeTimers = {}
 local function makeTimer(name)
-  local t = { _start = 0, _value = 0, _dir = 1, _cs = "unset", _lastTick = fakeClock }
+  local t = { _start = 0, _value = 0, _dir = 1, _cs = "unset", _lastTick = fakeClock, _name = name }
   return {
     start = function(self, ...) if select("#", ...) == 0 then return t._start else t._start = ... end end,
     value = function(self, ...)
@@ -50,9 +50,24 @@ local function makeTimer(name)
     reset = function(self) t._value = t._start t._lastTick = fakeClock end,
     direction = function(self, ...) if select("#", ...) == 0 then return t._dir else t._dir = ... end end,
     countingSource = function(self, ...) if select("#", ...) == 0 then return t._cs else t._cs = ... end end,
+    -- Get/set the timer's name -- real Ethos API, confirmed via the
+    -- official Lua reference (timer:name("New Name") renames it).
+    name = function(self, ...) if select("#", ...) == 0 then return t._name else t._name = ... end end,
   }
 end
+-- Names in here fail to resolve, simulating "this timer got renamed away
+-- and nothing is registered under the old name anymore" -- used to test
+-- core.timerMissing()/resolveTimerNow() without needing real hardware.
+local deniedTimerNames = {}
 model = { getTimer = function(name)
+  if deniedTimerNames[name] then return nil end
+  -- Search by CURRENT name first, so a timer renamed via :name() is
+  -- still found under its new name (matching real Ethos behavior),
+  -- falling back to lazy creation keyed by the requested name.
+  for _, existing in pairs(fakeTimers) do
+    local ok, curName = pcall(function() return existing:name() end)
+    if ok and curName == name then return existing end
+  end
   if not fakeTimers[name] then fakeTimers[name] = makeTimer(name) end
   return fakeTimers[name]
 end }
@@ -684,6 +699,51 @@ setSrc("MOM_LAUNCH", -100); core.wakeup()
 check("a 0:00 throw does not arm the bet", core.S.game.armed == false)
 check("a 0:00 throw does not count as an attempt", core.S.game.bets[1].attempts == 0,
   "attempts=" .. tostring(core.S.game.bets[1].attempts))
+
+-- ---- Test 25: timer-missing detection and the "rename back to default"
+-- recovery flow (pilot field report, 2026-09: renamed the target Ethos
+-- timer, DLG Poker went silently dead -- see core.timerMissing()/
+-- resolveTimerNow()/renameTimerToDefault())
+
+check("not missing initially (Timer3 already resolved at init)",
+  core.timerMissing() == false)
+
+-- Simulate the actual field report: the configured name stops resolving
+deniedTimerNames["Timer3"] = true
+core.resolveTimerNow()
+check("timerMissing() true once the configured name no longer resolves",
+  core.timerMissing() == true)
+
+-- The real recovery path: retype Target timer to the CURRENT actual name.
+-- Also clears the deny-list entry for "Timer3" -- once a real timer is
+-- renamed back to it below, that name genuinely resolves again, so the
+-- mock needs to stop pretending nothing has that name anymore.
+core.S.cfg.timerName = "Poker Timer"
+deniedTimerNames["Timer3"] = nil
+core.resolveTimerNow()
+check("resolves again once pointed at the timer's real current name",
+  core.timerMissing() == false)
+
+-- renameTimerToDefault() only acts on the already-resolved timer -- no
+-- index-guessing (Poker Probe already found index lookups unreliable
+-- past index 1 on real hardware)
+local renamed = core.renameTimerToDefault()
+check("renameTimerToDefault() reports success", renamed == true)
+check("config points at the default name again", core.S.cfg.timerName == "Timer3",
+  tostring(core.S.cfg.timerName))
+check("still resolves after renaming back", core.timerMissing() == false)
+
+-- And the guard: no live timer to act on -> false, doesn't crash
+deniedTimerNames["Timer3"] = true
+core.resolveTimerNow()
+check("timerMissing() true again (re-denied for this check)", core.timerMissing() == true)
+check("renameTimerToDefault() is a no-op with nothing resolved",
+  core.renameTimerToDefault() == false)
+
+-- Leave state clean for anything after this point
+deniedTimerNames["Timer3"] = nil
+core.resolveTimerNow()
+check("cleaned up: resolves normally again", core.timerMissing() == false)
 
 print("")
 if failures == 0 then print("ALL TESTS PASSED")

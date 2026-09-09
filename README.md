@@ -72,11 +72,22 @@ voice announcements well.
 ## Settings
 
 - **Game defaults** — working-time window length, bets per game.
-- **Timer** — which Ethos timer DLG Poker drives. **One-time manual setup
-  required:** in `SYSTEM > TIMERS`, set that timer's Start condition to
-  **Always**. Confirmed on real X14 hardware — without this, DLG Poker
-  sets the countdown up correctly but it never actually starts. DLG Poker
-  never touches that timer's own countdown/alert beeps, only its duration.
+- **Timer** — which Ethos timer DLG Poker drives, found **by name**
+  (default `Timer3`). If you rename that timer in Ethos (e.g. to give it
+  a friendlier label for your own audio callouts), DLG Poker won't find
+  it anymore — you'll see a red **"TIMER NOT FOUND" warning** on the
+  Setup and Live screens until you fix it. To fix: open Settings → Timer
+  and retype **Target timer** to the timer's new actual name (this now
+  takes effect immediately, no restart needed) — a **Status** line right
+  below confirms once it resolves. If you'd rather have it back under the
+  default name, a **"Use Timer3 again"** button renames the *currently
+  resolved* timer back to `Timer3` for you (only after Target timer
+  actually resolves first — it can't guess which timer you mean without
+  that). **One-time manual setup required regardless:** in
+  `SYSTEM > TIMERS`, set that timer's Start condition to **Always**.
+  Confirmed on real X14 hardware — without this, DLG Poker sets the
+  countdown up correctly but it never actually starts. DLG Poker never
+  touches that timer's own countdown/alert beeps, only its duration.
 - **Landing detection** — Lua-timed or native-logic-switch mode, which
   switch to watch, and a debounce threshold (1.0s by default) so a quick
   accidental brake tap mid-flight doesn't end a bet early.

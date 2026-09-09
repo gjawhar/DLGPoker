@@ -393,6 +393,52 @@ local function timerValue()
   return nil
 end
 
+-- Public: re-resolve + re-autoconfig the target timer right now, without
+-- a tool restart. Same pattern core.resolveSwitches() already uses for
+-- the FS1-4 name fields -- config.lua's Target timer field should call
+-- this after every edit (added alongside this function; it never did
+-- before, which made the ONE existing recovery path -- retype the
+-- correct current name -- silently not take effect until next restart).
+function core.resolveTimerNow()
+  resolveTimer()
+  autoConfigTimer()
+end
+
+-- Public: true once a persistent, visible warning should show (pilot
+-- request, 2026-09, field report: renaming the target Ethos timer broke
+-- DLG Poker with NO indication anywhere -- every timerSet/timerReset/
+-- timerValue call already silently no-ops on a nil S.timerObj, which is
+-- exactly the failure mode that needs to stop being silent). Gated on
+-- S.ready so it can't fire during the brief pre-init window.
+function core.timerMissing()
+  return S.ready and S.timerObj == nil
+end
+
+-- Public: rename the CURRENTLY-RESOLVED timer back to the default name
+-- ("Timer3") and point config at that name too (pilot request, 2026-09:
+-- "can you have the lua change the name back"). Deliberately only acts
+-- on S.timerObj -- the timer DLG Poker already has a live, BY-NAME-
+-- resolved handle to -- rather than guessing at a numeric slot: this
+-- project's own Poker Probe bench-testing (S6.3a) already confirmed
+-- index-based model.getTimer() lookups are unreliable past index 1 on
+-- real hardware, despite the official Lua reference documenting index
+-- support, so there is no reliable way to enumerate "candidate" timers
+-- by slot to guess which one the pilot means. The real recovery path is
+-- still: retype the Target timer field to the timer's CURRENT actual
+-- name first (already resolves correctly, by name, once it matches) --
+-- this button is what runs afterward, purely to restore the standard
+-- name if the pilot wants that back rather than leaving it renamed.
+function core.renameTimerToDefault()
+  if not S.timerObj then return false end
+  local defaultName = defaults().timerName
+  local ok = pcall(function() S.timerObj:name(defaultName) end)
+  if not ok then return false end
+  S.cfg.timerName = defaultName
+  core.saveConfig()
+  core.resolveTimerNow()
+  return S.timerObj ~= nil
+end
+
 -- Public accessor for screen.lua -- the live, actually-counting value of
 -- the physical timer, not the static bet target. Needed so S2 can show a
 -- real, ticking countdown once a launch has happened, rather than a

@@ -221,6 +221,41 @@ so hiding it currently just leaves that space blank rather than reclaimed
 for the countdown display. Revisit if that blank strip turns out to
 bother pilots in practice.
 
+## Timer-missing detection + recovery (2026-09, core.lua + config.lua + screen.lua)
+
+Real field report: the pilot renamed the target Ethos timer (`Timer3` →
+`Poker Timer`) for their own audio-callout purposes. `resolveTimer()`
+(by-name lookup, deliberate -- see "Resolve by NAME only" above) then
+found nothing, `S.timerObj` went `nil`, and every `timerSet`/
+`timerReset`/`timerValue` call already silently no-ops on that (`if not
+S.timerObj then return end`) -- so the whole app just went quietly dead
+with zero indication why.
+
+- `core.timerMissing()` -- `S.ready and S.timerObj == nil`. Checked by
+  screen.lua on both SETUP and LIVE to show a persistent red "TIMER NOT
+  FOUND" warning (not `core.setStatus()` -- that auto-clears after 3s,
+  and this needs to stay up until actually fixed).
+- `core.resolveTimerNow()` -- re-resolve + re-autoconfig without a
+  restart. config.lua's Target timer field now calls this after every
+  edit -- it never did before, so retyping the correct current name
+  silently didn't take effect until the next restart either.
+- `core.renameTimerToDefault()` -- pilot request ("can you have the lua
+  change the name back"): renames the CURRENTLY-RESOLVED `S.timerObj`
+  back to the default name and points config at it. Deliberately does
+  NOT try to enumerate/guess candidate timers by numeric index to offer
+  a picker -- Poker Probe's own bench-testing (S6.3a, see above) already
+  found `model.getTimer(index)` unreliable past index 1 on real
+  hardware, and Ethos's form API has no timer-picker field type either
+  (confirmed against the official Lua reference: `addSourceField`/
+  `addSwitchField`/`addSensorField` exist, no `addTimerField`). So the
+  real recovery is still "retype Target timer to the timer's actual
+  current name" (already resolves correctly once it matches, now
+  immediately per the point above) -- this button only runs afterward,
+  to restore the standard name if the pilot wants that back.
+- `timer:name(newName)` as a setter confirmed via the official Ethos Lua
+  reference before using it (get/set pattern, same as `direction()`/
+  `countingSource()`/`start()` already established in this file).
+
 ## Test workflow (follow this before shipping any core.lua change)
 
 Two ready-to-run scripts do this for you — no snippets to reconstruct:
@@ -228,7 +263,7 @@ Two ready-to-run scripts do this for you — no snippets to reconstruct:
 ```bash
 python3 harness/syntax_check.py        # checks every .lua file parses
 cp PokerTimer/core.lua harness/core.lua  # sync the harness's copy
-python3 harness/run_tests.py           # runs the full suite (65 tests)
+python3 harness/run_tests.py           # runs the full suite (96 tests, as of last count -- grep "check(" harness/test.lua for the current one)
 ```
 
 `run_tests.py` warns you directly if you forget the sync step — it diffs
@@ -238,7 +273,13 @@ source of confusion earlier in this project's history; the warning exists
 specifically because of that.
 
 Both scripts try to auto-locate a Lua 5.4/5.3 install and print a clear
-message (rather than a cryptic ctypes error) if none is found.
+message (rather than a cryptic ctypes error) if none is found. **This
+machine has neither** (no `lua`/`luac`, no `gh` CLI either) — see
+[[reference_lua_testing_via_lupa]] (assistant memory, not a file in this
+repo) for `pip3 install lupa`, which gives a real embedded Lua 5.5
+callable from Python and can run `harness/test.lua` directly, bypassing
+these two scripts' `ctypes`-based lookup entirely (it won't find lupa's
+interpreter that way).
 
 When adding a new core.lua behavior, add a harness test for it in the same
 pass — this project caught several real bugs this way (stale

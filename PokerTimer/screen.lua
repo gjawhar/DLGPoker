@@ -178,6 +178,20 @@ local function paintSetup(w, h)
   local title = "POKER TIMER"
   draw.text(math.floor((w - lcd.getTextSize(title)) / 2), cy, title)
 
+  -- Persistent, visible timer-missing warning (pilot request, 2026-09,
+  -- field report: renaming the target Ethos timer broke DLG Poker with
+  -- no indication anywhere -- every timerSet/timerReset call was already
+  -- silently no-oping on a nil timer object). Shown here rather than only
+  -- via core.status() -- that's a transient 3s message, and this needs to
+  -- stay up until actually fixed in Settings.
+  if core.timerMissing() then
+    cy = cy + 20
+    lcd.font(FONT_S)
+    draw.color(t.bad)
+    local err = "TIMER \"" .. tostring(core.S.cfg.timerName) .. "\" NOT FOUND - check Settings"
+    draw.text(math.floor((w - lcd.getTextSize(err)) / 2), cy, err, w - 12)
+  end
+
   cy = cy + 34
   lcd.font(FONT_L)
   local suits = { { "\xE2\x99\xA5", t.cardRed }, { "\xE2\x99\xA0", t.cardBlack },
@@ -512,6 +526,16 @@ local function paintLive(w, h)
     lcd.font(FONT_S)
     draw.color(t.amber)
     draw.text(6, h - 44, st, w - 12)
+  end
+
+  -- Same persistent timer-missing warning as SETUP (pilot request,
+  -- 2026-09) -- reuses the space the old L=/Z=/Br= debug readout used to
+  -- occupy at the very bottom, so nothing else needs to move to fit it.
+  if core.timerMissing() then
+    lcd.font(FONT_S)
+    draw.color(t.bad)
+    local err = "TIMER \"" .. tostring(core.S.cfg.timerName) .. "\" NOT FOUND - check Settings"
+    draw.text(6, h - 20, err, w - 12)
   end
 end
 
