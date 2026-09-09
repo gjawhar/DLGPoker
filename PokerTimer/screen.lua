@@ -133,10 +133,12 @@ local function keysFor(scr)
   if scr == SCREEN.LIVE then
     local g = core.S.game
     if g and g.armed then
+      -- A hit auto-advances in core.lua now (pollLanding), so this
+      -- combination (armed + result=="hit") can't actually be observed
+      -- here anymore -- by the time this next runs, g.idx/g.armed have
+      -- already moved on to the next bet. No FINISH GAME/NEXT BET case
+      -- needed.
       local bet = g.bets[g.idx]
-      if bet.result == "hit" then
-        return { "-", "-", "-", (g.idx >= g.betCount) and "FINISH GAME" or "NEXT BET" }
-      end
       return { "-", "-", "-", bet.attempts > 0 and "-" or "CANCEL" }
     end
     -- No CONFIRM key (pilot request, 2026-09) -- just throwing arms the
@@ -303,6 +305,23 @@ local function paintLive(w, h)
   cy = cy + 34
 
   if not g.armed then
+    -- "Just hit" banner (pilot request, 2026-09): a hit now auto-advances
+    -- straight here instead of stopping on its own screen first, so the
+    -- credit needs to be shown somewhere -- alongside the NEW bet's own
+    -- editing controls, since g.idx has already moved on by the time
+    -- this paints. g.idx - 1's own result can only be "hit" here at all
+    -- immediately after that auto-advance (any other not-armed state --
+    -- game start, cancelled all-in -- has no fresher bet to reference, or
+    -- that bet was never a hit), so this can't show stale info from
+    -- several bets back.
+    if g.idx > 1 and g.bets[g.idx - 1].result == "hit" then
+      lcd.font(FONT_S)
+      draw.color(t.good)
+      local hitMsg = string.format("BET %d: HIT +%ds credited", g.idx - 1, g.bets[g.idx - 1].scored_s or 0)
+      draw.text(math.floor((w - lcd.getTextSize(hitMsg)) / 2), cy, hitMsg)
+      cy = cy + 20
+    end
+
     lcd.font(FONT_XL)
     draw.color(t.accent)
     local minStr = string.format("%02d", g.editMin)
@@ -346,6 +365,15 @@ local function paintLive(w, h)
       draw.text(minX + math.floor((minW - lcd.getTextSize(capMin)) / 2), cy + boxH + 6, capMin)
       draw.text(secX + math.floor((secW - lcd.getTextSize(capSec)) / 2), cy + boxH + 6, capSec)
     end
+
+    -- Spells out what used to need a CONFIRM press explaining itself
+    -- (pilot request, 2026-09): now that a throw is the only thing that
+    -- arms+starts a bet, it needs to say so somewhere, or "how do I
+    -- actually start this" isn't evident from the screen alone anymore.
+    lcd.font(FONT_S)
+    draw.color(t.dim)
+    local launchHint = "LAUNCH to lock bet & start timer"
+    draw.text(math.floor((w - lcd.getTextSize(launchHint)) / 2), cy + boxH + 26, launchHint)
   elseif g.allInPending then
     lcd.font(FONT_XL)
     draw.color(t.cardRed)
@@ -365,35 +393,14 @@ local function paintLive(w, h)
                                  -- TARGET REACHED state below, to avoid
                                  -- the two overlapping
 
-    if bet.result == "hit" then
-      -- Persistent now -- previously set and then instantly overwritten
-      -- by an automatic advanceBet() in the same cycle, so this state
-      -- never actually rendered. Stays on screen until the pilot presses
-      -- NEXT BET (core.nextBet(), footer key or FS4) -- "a quick
-      -- path back to the next betting screen," not an automatic skip.
-      draw.color(t.good)
-      local big = "HIT"
-      draw.text(math.floor((w - lcd.getTextSize(big)) / 2), cy, big)
-      lcd.font(FONT_M)
-      draw.color(t.good)
-      local credited = draw.signed(bet.scored_s or 0) .. " credited"
-      draw.text(math.floor((w - lcd.getTextSize(credited)) / 2), cy + 40, credited)
-      lcd.font(FONT_S)
-      draw.color(t.dim)
-      -- On the last bet, pressing this actually ends the game (advanceBet
-      -- -> finalizeGame), not "next bet" -- the wording was misleading
-      -- exactly there, and it is the one place it matters most.
-      local isLastBet = g.idx >= g.betCount
-      -- Wording matches the footer key exactly (NEXT BET / FINISH GAME) --
-      -- "CONFIRM" here implied a button labelled that, which does not
-      -- exist on screen; the actual key just says NEXT BET or FINISH GAME.
-      local sub = isLastBet and "FINISH GAME" or "NEXT BET"
-      draw.text(math.floor((w - lcd.getTextSize(sub)) / 2), cy + 72, sub)
-      attemptY = cy + 100   -- HIT's own 3-line layout needs more room than
-                              -- the cy+68 default, or this collides with
-                              -- the "CONFIRM..." line right above it
-
-    elseif core.isLaunchPressed() then
+    -- bet.result == "hit" is unreachable here (pilot request, 2026-09):
+    -- a hit now auto-advances in core.lua's pollLanding the instant it's
+    -- scored, so g.idx/g.armed have already moved on to the next bet by
+    -- the time this next paints. See the "BET N: HIT +Ns" banner in the
+    -- `not g.armed` branch above instead -- that's where the credit is
+    -- shown now, alongside the new bet's own editing controls, rather
+    -- than on a dedicated screen that blocked on an explicit press.
+    if core.isLaunchPressed() then
       -- Explicit press confirmation -- previously the screen looked
       -- identical whether the switch had been touched or not, giving no
       -- feedback that a press even registered. This confirms Launch mode

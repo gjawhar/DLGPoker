@@ -623,19 +623,6 @@ local function advanceBet()
   end
 end
 
--- Public: the deliberate "move on" action once a bet has resolved as a
--- HIT (spec: a persistent HIT screen with "a quick path back to the next
--- betting screen", not an automatic skip-through). No-op for anything
--- other than a genuine hit -- in particular, a bust's retry is automatic
--- via a fresh launch and does not go through this at all.
-function core.nextBet()
-  local g = S.game
-  if not g or not g.armed then return end
-  local bet = currentBet()
-  if bet and bet.result == "hit" then
-    advanceBet()
-  end
-end
 
 -- ---------------------------------------------------------------- launch (revised, field-tested)
 
@@ -679,6 +666,22 @@ end
 -- unambiguous signal that the previous flight is over, so treat it as an
 -- automatic bust (not a hit -- they didn't achieve the target, that's why
 -- they're re-launching) before letting the new throw proceed normally.
+-- Audible + haptic alert (pilot request, 2026-09): this bust is a
+-- SILENT correction otherwise -- there is no way for the pilot to tell,
+-- from the switch alone, whether this new throw signal means "I actually
+-- landed and I'm relaunching" or "I'm still flying and just brushed the
+-- switch." Either way the previous attempt is now void, so surface that
+-- loudly rather than let the timer quietly reset while airborne and
+-- possibly go unnoticed until landing. system.playTone/playHaptic
+-- confirmed present since Ethos 1.1.0 (official Lua reference), pcall-
+-- wrapped the same defensive way every other native call in this file
+-- already is.
+local function alertUnresolvedRelaunch()
+  pcall(function() system.playTone(600, 150, 120) end)
+  pcall(function() system.playTone(600, 150) end)
+  pcall(function() system.playHaptic(300) end)
+end
+
 local function autoBustUnresolvedFlight()
   local g = S.game
   if not g or not g.armed then return end
@@ -690,7 +693,8 @@ local function autoBustUnresolvedFlight()
   S.prevZoomConfirm = nil
   timerSet(0)
   timerReset()
-  core.setStatus("bust (landed without braking) - relaunch to retry")
+  core.setStatus("bust (relaunched before landing was detected) - relaunch to retry")
+  alertUnresolvedRelaunch()
 end
 
 local function handleLaunchRise()
@@ -868,12 +872,17 @@ local function pollLanding()
           bet.scored_s = bet.target_s
           g.score = (g.score or 0) + (bet.target_s or 0)
           core.setStatus("hit")
-          -- advanceBet() deliberately NOT called here -- it used to be,
-          -- which meant "hit" was set and immediately overwritten by
-          -- moving to the next bet within the same cycle, so the HIT
-          -- screen never actually rendered. The bet stays armed, showing
-          -- HIT, until the pilot explicitly moves on (core.nextBet(),
-          -- wired to CONFIRM).
+          -- Auto-advance straight to the next bet (pilot request, 2026-09:
+          -- "100% of users hit NEXT BET anyway"). This used to be skipped
+          -- deliberately -- advanceBet() here once meant "hit" got
+          -- overwritten in the same cycle, so a dedicated HIT screen never
+          -- actually rendered before the pilot could see it. That's no
+          -- longer a problem because the render side moved too:
+          -- screen.lua's editing screen now shows "BET N: HIT +Ns" for
+          -- whichever bet just resolved (g.idx - 1) right alongside the
+          -- new bet's own editing controls, so the credit is still shown
+          -- -- just without a screen that blocks on an explicit press.
+          advanceBet()
         else
           bet.result = "bust"
           S.flightConfirmed = false   -- the retry gets its own fresh
@@ -1087,25 +1096,19 @@ function core.wakeup()
   -- missing entirely before -- FS4 always ran the LIVE-screen logic, which
   -- silently no-ops when there is no game yet, so START never fired.
   -- FS4/"confirm" no longer arms a bet (pilot request, 2026-09) -- a
-  -- throw does that now, see handleLaunchFall()'s auto-confirm branch.
-  -- What's left of this role: START on SETUP, and on LIVE, NEXT BET
-  -- (after a hit) or CANCEL (only reachable pre-throw via ALL IN, which
-  -- still arms explicitly ahead of the throw). Not-yet-armed on LIVE now
-  -- has nothing for FS4 to do at all.
+  -- throw does that now, see handleLaunchFall()'s auto-confirm branch. A
+  -- hit auto-advances now too (see pollLanding's scoring block), so this
+  -- role no longer has a NEXT BET job either. What's left: START on
+  -- SETUP, and on LIVE, CANCEL (only reachable pre-throw via ALL IN,
+  -- which still arms explicitly ahead of the throw). Not-yet-armed on
+  -- LIVE has nothing for FS4 to do at all.
   pollRole("confirm", S.confirmSwitchSrc, function()
     if S.screen == SCREEN.SETUP then
       core.startGame()
       return
     end
     if S.screen ~= SCREEN.LIVE then return end
-    local g = S.game
-    if not g or not g.armed then return end
-    local bet = currentBet()
-    if bet and bet.result == "hit" then
-      core.nextBet()
-    else
-      core.cancelArm()
-    end
+    core.cancelArm()
   end, false, nil)
 end
 

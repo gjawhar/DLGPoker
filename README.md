@@ -32,22 +32,31 @@ voice announcements well.
    scrolling then adjusts that field up *or* down (same 1 min / 10s steps),
    and ENTER again (or EXIT) leaves the field. On touch-capable radios
    (e.g. X20RS), tap the up/down arrows next to the time instead — also
-   bidirectional. Then just **launch**: releasing the glider locks in
-   whatever time was showing and starts your target Ethos timer counting
-   down, in the same motion — no separate confirm press.
+   bidirectional. **Then just launch (throw it)** — releasing the glider
+   is what locks in whatever time was showing *and* starts your target
+   Ethos timer counting down, both at once. There's no separate confirm
+   press; the screen says as much ("LAUNCH to lock bet & start timer")
+   while you're still editing.
 4. The radio's own configured countdown beeps/voice alerts count the bet
    down as normal; DLG Poker doesn't add anything to that.
 5. Land. Landing is detected from a debounced Landing-mode/brake signal
    (an instant brake tap mid-flight is ignored) the moment you land:
-   - Timer already reached zero → **Hit**, the bet's time is scored, and
-     the next bet becomes editable.
+   - Timer already reached zero → **Hit** — the bet's time is scored and
+     the game immediately moves to the next bet's editing screen, showing
+     "BET N: HIT +Ns credited" right alongside it. No extra button press.
    - Timer still counting → **Bust** — the bet stays locked, and
      launching again (**Retry**) restarts the same countdown with no
      extra button press needed.
    - Landed without braking (e.g. overshot on a downwind leg and just ran
      it in)? Going through the throw sequence again automatically busts
      the unresolved attempt and restarts the same countdown, exactly like
-     an explicit Bust — you don't need to touch anything else first.
+     an explicit Bust. This also covers relaunching (deliberately or by
+     accident) before you've landed at all — e.g. bumping the launch
+     switch after already reaching the target — so DLG Poker gives an
+     audible tone and a vibration at that exact moment: there's no way to
+     tell "genuinely landed and relaunching" from "still flying, switch
+     bumped by accident" from the switch signal alone, so it alerts you
+     either way rather than resetting the timer silently.
 6. **ALL IN** claims whatever time is left in the game window as your
    bet — computed at the moment you actually launch, not when you press
    the button. Unlike a normal bet, ALL IN still needs its own button

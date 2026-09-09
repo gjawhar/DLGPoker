@@ -24,7 +24,12 @@ local function makeSource(name)
     name  = function(self) return name end,
   }
 end
-system = { getSource = function(spec) if spec.name then return makeSource(spec.name) end return nil end }
+local alertCalls = { tone = 0, haptic = 0 }
+system = {
+  getSource = function(spec) if spec.name then return makeSource(spec.name) end return nil end,
+  playTone = function(freq, dur, pause) alertCalls.tone = alertCalls.tone + 1 end,
+  playHaptic = function(dur, strength) alertCalls.haptic = alertCalls.haptic + 1 end,
+}
 
 -- Getter vs setter resolved by ARGUMENT COUNT, not value -- core.lua calls
 -- countingSource(nil) to mean "set to nil", bench-confirmed as a real
@@ -183,12 +188,17 @@ pump(1.1)
 check("hit recorded (timer at/below zero)", core.S.game.bets[1].result == "hit",
   tostring(core.S.game.bets[1].result))
 check("score credited", core.S.game.score == 100, tostring(core.S.game.score))
-check("hit stays on screen -- no auto-advance", core.S.game.idx == 1, tostring(core.S.game.idx))
-check("still armed, showing the hit state", core.S.game.armed == true)
+-- Auto-advances immediately now (pilot request, 2026-09: "100% of users
+-- hit NEXT BET anyway") -- no separate press needed, and the resolved
+-- bet's own result/scored_s stay intact for screen.lua's "BET N: HIT"
+-- banner to read afterward.
+check("auto-advanced to the next bet", core.S.game.idx == 2, tostring(core.S.game.idx))
+check("new bet not armed -- editable immediately", core.S.game.armed == false)
+check("resolved bet's hit result preserved for the banner", core.S.game.bets[1].result == "hit",
+  tostring(core.S.game.bets[1].result))
+check("resolved bet's credited seconds preserved", core.S.game.bets[1].scored_s == 100,
+  tostring(core.S.game.bets[1].scored_s))
 setSrc("LANDING_MODE", -100); core.wakeup()
-
-setSrc("FS4", 100); core.wakeup(); tick(0.05); setSrc("FS4", -100); core.wakeup()
-check("FS4 (nextBet) advances after a hit", core.S.game.idx == 2, tostring(core.S.game.idx))
 
 -- ---- Test 5: hold-to-reset does not also fire a bump, and only touches
 -- its OWN field (Defect 3: FS1 held was zeroing both minutes and seconds)
@@ -361,10 +371,15 @@ setSrc("ZOOM_MODE", -100); core.wakeup()     -- confirms flight
 check("confirmed after first release+exit", core.S.flightConfirmed == true)
 
 tick(5)   -- flies around a while, lands long without ever braking
+local toneCallsBefore, hapticCallsBefore = alertCalls.tone, alertCalls.haptic
 setSrc("MOM_LAUNCH", 100); core.wakeup()     -- re-grip: going through the throw sequence again
 check("stranded attempt auto-busted on re-grip", core.S.game.bets[2].result == "bust",
   tostring(core.S.game.bets[2].result))
 check("confirmation cleared by the auto-bust", core.S.flightConfirmed == false)
+check("auto-bust plays an audible alert", alertCalls.tone > toneCallsBefore,
+  "tone calls=" .. tostring(alertCalls.tone))
+check("auto-bust plays a haptic alert", alertCalls.haptic > hapticCallsBefore,
+  "haptic calls=" .. tostring(alertCalls.haptic))
 check("auto-bust resets the timer back to the target", core.S.timerObj:value() == 60,
   tostring(core.S.timerObj:value()))
 check("attempts NOT incremented by the re-grip itself", core.S.game.bets[2].attempts == 1,
@@ -409,18 +424,6 @@ check("isLaunchPressed false when released", core.isLaunchPressed() == false)
 setSrc("MOM_LAUNCH", 100)
 check("isLaunchPressed true when held", core.isLaunchPressed() == true)
 setSrc("MOM_LAUNCH", -100)
-
--- ---- Test 17: nextBet() is a no-op for anything other than a genuine hit
-
-core.S.game.idx = 1
-core.S.game.armed = true
-core.S.game.bets[1].result = "pending"
-local idxBefore = core.S.game.idx
-core.nextBet()
-check("nextBet() does nothing when not a hit", core.S.game.idx == idxBefore)
-core.S.game.bets[1].result = "bust"
-core.nextBet()
-check("nextBet() does nothing on a bust either", core.S.game.idx == idxBefore)
 
 -- ---- Test 18: the flightConfirmed gate relaxes once the target is
 -- actually reached -- a short flight that brakes without ever doing a
@@ -625,10 +628,19 @@ setSrc("LANDING_MODE", -100); core.wakeup()
 -- ---- Test 23: finalizeGame() silences the timer so it doesn't keep
 -- counting/alerting in the background after the pilot leaves the game
 
+-- Drives the real hit path (landing detected with the timer already at
+-- zero) rather than calling advanceBet() directly -- it's a local
+-- function in core.lua now that nextBet() (its only public caller) is
+-- gone, so this is the only way left to exercise it from the harness,
+-- and it's more honest anyway: this is what a real last-bet hit does.
 core.S.game.armed = true
+core.S.game.allInPending = false
 core.S.game.idx = core.S.game.betCount
-core.S.game.bets[core.S.game.idx].result = "hit"
-core.nextBet()   -- last bet, hit -> advanceBet() -> finalizeGame()
+core.S.game.bets[core.S.game.idx] = { idx = core.S.game.idx, target_s = 30, result = "pending", attempts = 1, scored_s = 0, allIn = false }
+core.S.flightConfirmed = true
+core.S.timerObj:value(0)
+setSrc("LANDING_MODE", 100)
+pump(1.1)   -- last bet, hit -> auto-advanceBet() -> finalizeGame()
 check("game finalized to SUMMARY", core.S.screen == core.SCREEN.SUMMARY)
 local endVal = core.S.timerObj:value()
 check("timer silenced at game end", endVal ~= nil and math.abs(endVal) < 1,
