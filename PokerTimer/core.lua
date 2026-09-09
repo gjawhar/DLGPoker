@@ -415,23 +415,6 @@ function core.status()
   return S.status
 end
 
--- Live diagnostic readout for screen.lua -- direct, on-radio confirmation
--- of whether the resolved switches are actually tracking real hardware,
--- rather than routing every "is the launch signal alive" question back
--- through a separate probe tool. Raw values, no interpretation.
-function core.debugLaunchState()
-  local function v(src)
-    if not src then return "unresolved" end
-    local ok, val = pcall(function() return src:value() end)
-    return ok and tostring(val) or "err"
-  end
-  return {
-    launch = v(S.launchSrc),
-    zoom   = v(S.zoomSrc),
-    landing = v(S.landingSrc),
-  }
-end
-
 -- Public: is the launch switch CURRENTLY held down, right now. Lets S2
 -- show "you are in Launch mode, release to enter Zoom and start the
 -- timer" while the pilot is mid-press, rather than the screen looking

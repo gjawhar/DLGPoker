@@ -495,17 +495,6 @@ local function paintLive(w, h)
     draw.color(t.amber)
     draw.text(6, h - 44, st, w - 12)
   end
-
-  -- Live diagnostic readout -- direct, on-radio confirmation of whether
-  -- the launch/zoom/landing sources are actually tracking real hardware,
-  -- so "is the launch even being detected" can be watched in real time
-  -- instead of inferred from downstream game behaviour. Small, always on,
-  -- bottom-left -- deliberately plain, no interpretation.
-  local dbg = core.debugLaunchState()
-  lcd.font(FONT_S)
-  draw.color(t.dim)
-  draw.text(6, h - 20,
-    string.format("L=%s Z=%s Br=%s", dbg.launch, dbg.zoom, dbg.landing), w - 100)
 end
 
 -- ---------------------------------------------------------------- S3 summary
