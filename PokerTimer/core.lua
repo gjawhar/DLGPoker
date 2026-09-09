@@ -60,7 +60,7 @@ local S = {
   prevLaunch     = -100,
   prevZoom       = -100,
 
-  -- Sub-second durations (landing debounce default 0.5s, hold-to-reset
+  -- Sub-second durations (landing debounce default 1.0s, hold-to-reset
   -- 0.8s) CANNOT be measured with os.time() -- confirmed directly on
   -- hardware in Poker Probe (S6.4): os.time() is whole-seconds only, so
   -- two samples 0.6s apart can floor to the identical integer second and
@@ -139,7 +139,11 @@ local function defaults()
     timerName     = "Timer3",
     landingSwitchName = "LANDING_MODE",   -- Lua-timed default (S6.4)
     landingMode   = "lua",                -- "lua" | "native" (LANDED_STABLE)
-    landingDebounce   = 0.5,              -- seconds -- "ignore quick taps" (S5 UI)
+    -- 1.0s (pilot request, 2026-09, field test): a quick brake tap in
+    -- flight -- fingers slipping, repositioning -- must not read as a
+    -- landing. 0.5s wasn't long enough to rule that out; a full second of
+    -- continuous brake is.
+    landingDebounce   = 1.0,              -- seconds -- "ignore quick taps" (S5 UI)
     stuckWarnThreshold = 2.0,             -- seconds (S6.5)
     holdResetThreshold = 0.8,             -- seconds -- +MIN/+SEC hold=0 (S5.1)
     display       = "day",                -- "day" | "night" (S5.3)
@@ -803,8 +807,9 @@ end
 -- counting (see wakeup-rate calibration above) rather than os.time() --
 -- confirmed necessary, not just theoretical, by a functional test that
 -- caught this exact failure mode before it ever reached hardware: two
--- samples 0.6s apart can floor to the identical os.time() integer second,
--- reading a dwell of zero and never crossing the 0.5s default threshold.
+-- samples well under a second apart can floor to the identical os.time()
+-- integer second, reading a dwell of zero regardless of how close the
+-- real elapsed time is to the debounce threshold.
 local function pollLanding()
   local g = S.game
   if not g or not g.armed then return end
@@ -848,7 +853,7 @@ local function pollLanding()
 
   if active then
     S.landingCalls = S.landingCalls + 1
-    if not S.landingActive and S.landingCalls >= secondsToCalls(S.cfg.landingDebounce or 0.5) then
+    if not S.landingActive and S.landingCalls >= secondsToCalls(S.cfg.landingDebounce or 1.0) then
       S.landingActive = true
       -- Debounced landing signal fires exactly once per touch-down.
       -- Wrapped precisely around the scoring itself: more targeted than

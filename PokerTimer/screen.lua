@@ -115,6 +115,15 @@ local CONTENT_TOP = CHROME_H + KEY_ROW_H   -- everything else starts here
 -- ---------------------------------------------------------------- focus state
 
 local focus = { [SCREEN.SETUP] = 1, [SCREEN.LIVE] = 1, [SCREEN.SUMMARY] = 1, [SCREEN.LOG] = 1 }
+
+-- Rotary edit mode: nil | "min" | "sec". While set, ROTARY scroll bumps
+-- that field directly (via the same core.bumpMin/bumpMinDown/bumpSec/
+-- bumpSecDown already used by touch's arrow steppers) instead of moving
+-- footer focus. Set/cleared from screen.event()'s KEY_ENTER_BREAK/
+-- KEY_RTN_FIRST/KEY_EXIT_FIRST handling below; self-heals in
+-- screen.paint() if the focused key stops being MIN/SEC out from under it
+-- (e.g. a real throw arms the bet mid-edit).
+local rotaryEditField = nil
 local logTop = 1
 
 -- ---------------------------------------------------------------- S1 setup
@@ -654,14 +663,28 @@ local function paintKeys(w, h, scr)
   lcd.font(FONT_S)
   for i = 1, #topKeys do
     local kx = (i - 1) * kw
+    local label = topKeys[i]
+    -- Rotary edit mode (pilot request, 2026-09): scroll focus to MIN/SEC,
+    -- press ENTER to start editing it directly -- rotary scroll then
+    -- bumps that field up/down instead of moving focus, press ENTER again
+    -- to leave. Filled instead of outlined so it reads as unmistakably
+    -- different from plain focus -- "you're inside this field now."
+    local editing = rotaryEditField and focus[scr] == i
+      and label == (rotaryEditField == "min" and "MIN" or "SEC")
     draw.color(t.border)
     lcd.drawRectangle(kx + 1, ky, kw - 2, kh - 2, 1)
-    if focus[scr] == i then
+    if editing then
+      draw.color(t.accent)
+      lcd.drawFilledRectangle(kx, ky, kw, kh - 1)
+    elseif focus[scr] == i then
       draw.color(t.accent)
       lcd.drawRectangle(kx, ky, kw, kh - 1, 2)
     end
-    draw.color((topKeys[i] == "-") and t.dim or t.txt)
-    local label = topKeys[i]
+    if editing then
+      draw.color(t.bg)
+    else
+      draw.color((label == "-") and t.dim or t.txt)
+    end
     local tw = lcd.getTextSize(label)
     draw.text(kx + math.floor((kw - tw) / 2), ky + 8, label, kw - 4)
     if isTouchCapable() and label ~= "-" then
@@ -700,6 +723,10 @@ function screen.paint(w, h)
                      -- was last shown would keep intercepting taps on a
                      -- screen (SUMMARY/LOG) that never repopulates it.
   local scr = core.S.screen
+  if rotaryEditField then
+    local expected = (rotaryEditField == "min") and "MIN" or "SEC"
+    if keysFor(scr)[focus[scr] or 1] ~= expected then rotaryEditField = nil end
+  end
   -- Wrapped defensively -- confirmed a real bug (CONFIRM reachable on
   -- SUMMARY/LOG, corrupting bet data) via code review after a hard Ethos
   -- error was reported opening the log, and fixed that in core.lua's
@@ -807,7 +834,16 @@ function screen.event(value, x, y)
     local n = math.abs(tonumber(x) or 1)
     if n < 1 then n = 1 end
     local d = (value == KEY_ROTARY_RIGHT) and n or -n
-    if scr == SCREEN.LOG then
+    if rotaryEditField then
+      -- In edit mode: scroll bumps the field directly, same granularity
+      -- (whole minutes / 10s) as the footer key and the touch arrow
+      -- steppers -- reuses those exact functions rather than inventing a
+      -- separate step size.
+      local upFn = (rotaryEditField == "min") and core.bumpMin or core.bumpSec
+      local downFn = (rotaryEditField == "min") and core.bumpMinDown or core.bumpSecDown
+      local fn = (d > 0) and upFn or downFn
+      for _ = 1, math.abs(d) do fn() end
+    elseif scr == SCREEN.LOG then
       logTop = math.max(1, logTop + d)
     else
       local keys = keysFor(scr)
@@ -819,11 +855,28 @@ function screen.event(value, x, y)
   end
 
   if value == KEY_ENTER_BREAK then
+    if rotaryEditField then
+      rotaryEditField = nil   -- second ENTER leaves edit mode
+      return true
+    end
+    -- Rotary edit mode (pilot request, 2026-09): ENTER on MIN/SEC starts
+    -- editing that field directly instead of just bumping it once --
+    -- matches Ethos's own "focus a field, press ENTER, scroll to adjust"
+    -- pattern rather than treating MIN/SEC as plain one-shot buttons.
+    local label = keysFor(scr)[focus[scr] or 1]
+    if label == "MIN" or label == "SEC" then
+      rotaryEditField = (label == "MIN") and "min" or "sec"
+      return true
+    end
     activate(scr, focus[scr] or 1)
     return true
   end
 
   if value == KEY_RTN_FIRST or value == KEY_EXIT_FIRST or value == 99 then
+    if rotaryEditField then
+      rotaryEditField = nil
+      return true
+    end
     if scr == SCREEN.LOG then core.S.screen = SCREEN.SUMMARY return true end
     return false
   end

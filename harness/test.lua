@@ -159,7 +159,7 @@ check("flight confirmed before this bust", core.S.flightConfirmed == true)
 
 tick(3)
 setSrc("LANDING_MODE", 100)
-pump(0.6)   -- past the 0.5s default debounce, pumped at a realistic rate
+pump(1.1)   -- past the 1.0s default debounce, pumped at a realistic rate
 check("bust recorded (timer still positive)", core.S.game.bets[1].result == "bust",
   tostring(core.S.game.bets[1].result))
 check("still armed for retry after bust", core.S.game.armed == true)
@@ -179,7 +179,7 @@ setSrc("ZOOM_MODE", -100); core.wakeup()   -- confirm flight again for this atte
 
 tick(99)   -- let the full 100s target elapse (2s already ticked above)
 setSrc("LANDING_MODE", 100)
-pump(0.6)
+pump(1.1)
 check("hit recorded (timer at/below zero)", core.S.game.bets[1].result == "hit",
   tostring(core.S.game.bets[1].result))
 check("score credited", core.S.game.score == 100, tostring(core.S.game.score))
@@ -247,7 +247,7 @@ core.S.game.idx = 2
 core.S.game.bets[2] = { idx = 2, target_s = 50, result = "pending", attempts = 0, scored_s = 0, allIn = false }
 setSrc("MOM_LAUNCH", -100)   -- never launched this bet
 setSrc("LANDING_MODE", 100) -- brakes already down from before
-pump(0.6)                    -- past the debounce
+pump(1.1)                    -- past the debounce
 check("no scoring without a real launch first", core.S.game.bets[2].result == "pending",
   tostring(core.S.game.bets[2].result))
 check("still armed, same bet, unresolved", core.S.game.armed == true and core.S.game.idx == 2)
@@ -267,7 +267,7 @@ setSrc("ZOOM_MODE", -100); core.wakeup()   -- confirm flight
 
 tick(49)   -- let the 50s target elapse (2s already ticked above)
 setSrc("LANDING_MODE", 100)
-pump(0.6)
+pump(1.1)
 check("scores normally once a real launch has happened", core.S.game.bets[2].result == "hit",
   tostring(core.S.game.bets[2].result))
 setSrc("LANDING_MODE", -100); core.wakeup()
@@ -324,7 +324,7 @@ check("attempt registered on release", core.S.game.bets[2].attempts == 1,
 check("not yet flight-confirmed", core.S.flightConfirmed == false)
 
 setSrc("LANDING_MODE", 100)
-pump(0.6)
+pump(1.1)
 check("no scoring before zoom-exit is confirmed", core.S.game.bets[2].result == "pending",
   tostring(core.S.game.bets[2].result))
 setSrc("LANDING_MODE", -100); core.wakeup()
@@ -335,7 +335,7 @@ check("flight confirmed after zoom-exit", core.S.flightConfirmed == true)
 
 tick(3)
 setSrc("LANDING_MODE", 100)
-pump(0.6)
+pump(1.1)
 check("scores normally once flight is confirmed", core.S.game.bets[2].result == "bust",
   tostring(core.S.game.bets[2].result))
 setSrc("LANDING_MODE", -100); core.wakeup()
@@ -440,7 +440,7 @@ check("not confirmed (no elevator wag simulated)", core.S.flightConfirmed == fal
 
 tick(21)   -- let the 20s target elapse -- ZOOM_MODE never fell
 setSrc("LANDING_MODE", 100)
-pump(0.6)
+pump(1.1)
 check("scores once target is reached, even without elevator confirmation",
   core.S.game.bets[1].result == "hit", tostring(core.S.game.bets[1].result))
 setSrc("LANDING_MODE", -100); core.wakeup()
@@ -459,7 +459,7 @@ setSrc("ZOOM_MODE", 100)
 setSrc("MOM_LAUNCH", -100); core.wakeup()
 tick(5)   -- well short of the 60s target
 setSrc("LANDING_MODE", 100)
-pump(0.6)
+pump(1.1)
 check("early-flight protection unchanged (still positive, unconfirmed)",
   core.S.game.bets[1].result == "pending", tostring(core.S.game.bets[1].result))
 setSrc("LANDING_MODE", -100); core.wakeup()
@@ -534,7 +534,7 @@ tick(2)
 setSrc("ZOOM_MODE", -100); core.wakeup()   -- confirm flight
 tick(3)
 setSrc("LANDING_MODE", 100)
-pump(0.6)
+pump(1.1)
 check("first attempt busts", core.S.game.bets[1].result == "bust",
   tostring(core.S.game.bets[1].result))
 setSrc("LANDING_MODE", -100); core.wakeup()
@@ -573,7 +573,7 @@ setSrc("ZOOM_MODE", -100); core.wakeup()
 core.S.game.score = {}   -- deliberately not a number
 tick(16)
 setSrc("LANDING_MODE", 100)
-pump(0.6)   -- the debounced block throws here
+pump(1.1)   -- the debounced block throws here
 check("landingActive did not latch stuck after the error",
   core.S.landingActive == false, tostring(core.S.landingActive))
 setSrc("LANDING_MODE", -100); core.wakeup()
@@ -589,7 +589,7 @@ tick(2)
 setSrc("ZOOM_MODE", -100); core.wakeup()
 tick(16)
 setSrc("LANDING_MODE", 100)
-pump(0.6)
+pump(1.1)
 check("scores normally again after recovery", core.S.game.bets[1].result == "hit",
   tostring(core.S.game.bets[1].result))
 setSrc("LANDING_MODE", -100); core.wakeup()
@@ -612,7 +612,7 @@ tick(2)
 setSrc("ZOOM_MODE", -100); core.wakeup()
 tick(5)   -- well short of the 60s target -- a genuine bust
 setSrc("LANDING_MODE", 100)
-pump(0.6)
+pump(1.1)
 check("bust recorded", core.S.game.bets[1].result == "bust")
 -- Tolerance, not exact-zero: the mock timer's own "always counting"
 -- simulation ticks fractionally between the reset and this check, same

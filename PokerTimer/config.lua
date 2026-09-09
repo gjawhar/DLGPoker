@@ -15,7 +15,7 @@ local function numField(line, min, max, key, suffix)
   return f
 end
 
--- Sub-second thresholds (default 0.5s, 0.8s) are edited as whole TENTHS
+-- Sub-second thresholds (default 1.0s, 0.8s) are edited as whole TENTHS
 -- of a second, not raw seconds -- Ethos's number field coerced a 0.8
 -- default toward 0 on real hardware (confirmed: the field displayed "0s"),
 -- which silently broke hold-to-reset by making it fire on virtually the

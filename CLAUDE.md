@@ -152,8 +152,36 @@ directly by the DLG-for-Ethos template's actual flight-mode logic:
    rules out ground-fumbling regardless of whether the elevator gesture
    happened. Confirmed via a dedicated regression test that early-flight
    protection (before target reached) is unaffected.
-5. **Brakes held** (debounced, `landingDebounce` config) = ends the attempt,
-   scoring hit or bust based on whether the timer had reached zero.
+5. **Brakes held** (debounced, `landingDebounce` config, default **1.0s**
+   as of 2026-09 pilot field-test feedback — was 0.5s, not long enough to
+   rule out an accidental in-flight brake tap) = ends the attempt, scoring
+   hit or bust based on whether the timer had reached zero.
+
+## Rotary/FS edit mode for MIN/SEC (2026-09, screen.lua only)
+
+On a rotary/FS radio (no touch), scrolling focus to MIN or SEC and
+pressing ENTER now starts editing that field directly: `rotaryEditField`
+(`nil | "min" | "sec"`, module-local in screen.lua) switches ROTARY scroll
+from moving footer focus to calling `core.bumpMin`/`bumpMinDown`/
+`bumpSec`/`bumpSecDown` directly (same functions/granularity the touch
+arrow steppers already use) — bidirectional, unlike the plain MIN/SEC
+footer keys which only ever bump up. ENTER again, or RTN/EXIT, leaves
+edit mode. `screen.paint()` self-heals it to `nil` if the focused key
+stops being MIN/SEC out from under it (e.g. a real throw arms the bet
+mid-edit).
+
+**Deliberately does NOT use a long-press-ENTER gesture** (a `KEY_ENTER_LONG`-
+style "hold to reset" mirroring the FS-switch hold-to-reset) even though
+that was the pilot's first request. Checked the Ethos key-event constants
+before building anything (same "verify before shipping" approach as the
+touch/arrow-triangle work) and found a live FrSkyRC-Feedback-Community
+report that receiving that long-press event in a System Tool **suspends
+all key input** — a system-level side effect this app has no control
+over, not just "did I get the constant name right." The ENTER-to-edit-
+then-scroll design solves the same problem (reaching 0 without wrapping
+through the whole range) using only `KEY_ENTER_BREAK`/`KEY_ROTARY_LEFT`/
+`KEY_ROTARY_RIGHT`, all three already proven reliable elsewhere in this
+file, so there was no reason to take on that risk.
 
 ## Test workflow (follow this before shipping any core.lua change)
 

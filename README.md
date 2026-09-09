@@ -27,9 +27,12 @@ voice announcements well.
    defaults.
 2. Press **START**. The game clock begins and the first bet is live.
 3. Bump the bet up with **+SEC** (adds 10s, rolling into +1 min past 50s)
-   or **+MIN** (adds 1 min) — on touch-capable radios (e.g. X20RS), tap
-   the up/down arrows next to the time instead, which can also count
-   back down. Then just **launch**: releasing the glider locks in
+   or **+MIN** (adds 1 min). On a rotary/FS radio (e.g. X14), you can also
+   scroll focus to MIN or SEC and press **ENTER** to edit it directly —
+   scrolling then adjusts that field up *or* down (same 1 min / 10s steps),
+   and ENTER again (or EXIT) leaves the field. On touch-capable radios
+   (e.g. X20RS), tap the up/down arrows next to the time instead — also
+   bidirectional. Then just **launch**: releasing the glider locks in
    whatever time was showing and starts your target Ethos timer counting
    down, in the same motion — no separate confirm press.
 4. The radio's own configured countdown beeps/voice alerts count the bet
@@ -63,8 +66,8 @@ voice announcements well.
   sets the countdown up correctly but it never actually starts. DLG Poker
   never touches that timer's own countdown/alert beeps, only its duration.
 - **Landing detection** — Lua-timed or native-logic-switch mode, which
-  switch to watch, and a debounce threshold so a quick accidental brake
-  tap mid-flight doesn't end a bet early.
+  switch to watch, and a debounce threshold (1.0s by default) so a quick
+  accidental brake tap mid-flight doesn't end a bet early.
 - **Controls** — switch assignment for +MIN / +SEC / ALL IN /
   START-CANCEL-NEXT (defaults to the X14's Function Switches FS1–FS4), a
   hold-to-reset threshold, and a stuck-switch warning.
