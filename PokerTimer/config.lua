@@ -115,7 +115,12 @@ function config.build()
   switchField(line, "secSwitchName")
   line = panel:addLine("ALL IN switch")
   switchField(line, "allinSwitchName")
-  line = panel:addLine("CONFIRM switch")
+  -- Still named "confirm" internally (S.confirmSwitchSrc, cfg key
+  -- confirmSwitchName) -- that's just the saved config key, unrelated to
+  -- what it's actually labelled or does now. Relabelled here (pilot
+  -- request, 2026-09: a throw arms/starts a bet now, so this switch's
+  -- remaining jobs are START on Setup and CANCEL/NEXT BET on Live).
+  line = panel:addLine("START/CANCEL/NEXT switch")
   switchField(line, "confirmSwitchName")
   line = panel:addLine("Hold-to-reset")
   tenthsField(line, 2, 30, "holdResetThreshold")

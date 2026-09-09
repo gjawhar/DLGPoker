@@ -130,7 +130,10 @@ local function keysFor(scr)
       end
       return { "-", "-", "-", bet.attempts > 0 and "-" or "CANCEL" }
     end
-    return { "MIN", "SEC", "ALL IN", "CONFIRM" }
+    -- No CONFIRM key (pilot request, 2026-09) -- just throwing arms the
+    -- bet now (core.lua's handleLaunchFall), so FS4 has nothing to do
+    -- here; "-" keeps MIN/SEC/ALL IN aligned to FS1-3 same as before.
+    return { "MIN", "SEC", "ALL IN", "-" }
   end
   -- FS1/FS4-aligned, matching every other screen's top row, rather than
   -- two keys stretched to half the screen each -- previously these had no
@@ -357,7 +360,7 @@ local function paintLive(w, h)
       -- Persistent now -- previously set and then instantly overwritten
       -- by an automatic advanceBet() in the same cycle, so this state
       -- never actually rendered. Stays on screen until the pilot presses
-      -- NEXT BET (core.nextBet(), footer key or CONFIRM/FS4) -- "a quick
+      -- NEXT BET (core.nextBet(), footer key or FS4) -- "a quick
       -- path back to the next betting screen," not an automatic skip.
       draw.color(t.good)
       local big = "HIT"
@@ -738,7 +741,6 @@ local function activate(scr, i)
     if label == "MIN" then core.bumpMin()
     elseif label == "SEC" then core.bumpSec()
     elseif label == "ALL IN" then core.allIn()
-    elseif label == "CONFIRM" then core.confirmBet()
     elseif label == "CANCEL" then core.cancelArm()
     elseif label == "NEXT BET" then core.nextBet() end
   elseif scr == SCREEN.SUMMARY then

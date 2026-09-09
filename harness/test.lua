@@ -101,7 +101,10 @@ check("game started", core.S.game ~= nil)
 check("default window", core.S.game.windowS == 600)
 check("default bet count", core.S.game.betCount == 3)
 
--- ---- Test 1: bump min/sec via short press, confirm, launch resets timer
+-- ---- Test 1: bump min/sec via short press, throw arms+starts (no CONFIRM
+-- press -- removed 2026-09 per pilot field-test feedback: a throw is now
+-- itself the confirmation, exactly matching how a launch has always been
+-- detected -- see core.lua's handleLaunchFall auto-confirm branch)
 
 core.S.screen = core.SCREEN.LIVE
 setSrc("FS1", 100); core.wakeup(); tick(0.05); setSrc("FS1", -100); core.wakeup()
@@ -110,21 +113,24 @@ check("bump min via short press", core.S.game.editMin == 1, tostring(core.S.game
 setSrc("FS2", 100); core.wakeup(); tick(0.05); setSrc("FS2", -100); core.wakeup()
 check("bump sec via short press", core.S.game.editSec == 40, tostring(core.S.game.editSec))
 
-setSrc("FS4", 100); core.wakeup(); tick(0.05); setSrc("FS4", -100); core.wakeup()
-check("bet armed after confirm", core.S.game.armed == true)
-check("bet target is 100s", core.S.game.bets[1].target_s == 100, tostring(core.S.game.bets[1].target_s))
-check("timer start preloaded", core.S.timerObj:start() == 100)
+check("not armed before any throw", core.S.game.armed == false)
 
--- ---- Test 1a: press primes (no attempt yet), release is the real launch
+-- ---- Test 1a: press primes (no attempt, no arming yet -- nothing to
+-- reset to before a target exists), release is the real launch AND is
+-- what arms the bet, using whatever MIN:SEC was showing at that instant.
 -- (revised model -- the ORIGINAL rising-edge-only design started the
 -- countdown while the pilot was still winding up, before the model
 -- actually left the hand; release is the real throw)
 
 setSrc("MOM_LAUNCH", 100); core.wakeup()   -- press: priming only
+check("press does NOT arm the bet", core.S.game.armed == false)
 check("press does NOT count as an attempt", core.S.game.bets[1].attempts == 0,
   "attempts=" .. tostring(core.S.game.bets[1].attempts))
 
-setSrc("MOM_LAUNCH", -100); core.wakeup()  -- release: the actual throw
+setSrc("MOM_LAUNCH", -100); core.wakeup()  -- release: the actual throw --
+                                            -- arms, sets the target, and starts, all at once
+check("bet armed by the throw itself", core.S.game.armed == true)
+check("bet target is 100s", core.S.game.bets[1].target_s == 100, tostring(core.S.game.bets[1].target_s))
 check("timer reset to target on release", core.S.timerObj:value() == 100, tostring(core.S.timerObj:value()))
 check("attempts incremented on release", core.S.game.bets[1].attempts == 1,
   "attempts=" .. tostring(core.S.game.bets[1].attempts))
@@ -334,9 +340,15 @@ check("scores normally once flight is confirmed", core.S.game.bets[2].result == 
   tostring(core.S.game.bets[2].result))
 setSrc("LANDING_MODE", -100); core.wakeup()
 
--- ---- Test 13: once confirmed (flying), the launch switch is locked out
--- entirely -- no reset, no attempt change -- only brakes can end it now
--- (matches: "once at #3, you can't stop the timer until brakes")
+-- ---- Test 13: once confirmed (flying), a LANDING signal (brakes) is what
+-- ends the attempt in the normal case -- but a fresh throw sequence while
+-- still confirmed-and-unresolved (pilot landed WITHOUT braking, e.g.
+-- overshot downwind and ran it in) must not be a silent no-op: it should
+-- auto-bust the stranded attempt and start a brand new one at the same
+-- target. (Pilot field-test report, 2026-09: this used to be a permanent
+-- no-op -- the physical timer, never stopped or reset, just kept counting
+-- straight through the "landing" and the next throw, silently -- see
+-- autoBustUnresolvedFlight() in core.lua.)
 
 core.S.game.bets[2] = { idx = 2, target_s = 60, result = "pending", attempts = 0, scored_s = 0, allIn = false }
 core.S.flightConfirmed = false
@@ -348,17 +360,23 @@ setSrc("MOM_LAUNCH", -100); core.wakeup()   -- release 1, attempt 1
 setSrc("ZOOM_MODE", -100); core.wakeup()     -- confirms flight
 check("confirmed after first release+exit", core.S.flightConfirmed == true)
 
-local valueBeforeSpurious = core.S.timerObj:value()
-setSrc("MOM_LAUNCH", 100); core.wakeup()     -- spurious/accidental press post-confirm
-check("press after confirm does NOT reset the timer", core.S.timerObj:value() == valueBeforeSpurious,
+tick(5)   -- flies around a while, lands long without ever braking
+setSrc("MOM_LAUNCH", 100); core.wakeup()     -- re-grip: going through the throw sequence again
+check("stranded attempt auto-busted on re-grip", core.S.game.bets[2].result == "bust",
+  tostring(core.S.game.bets[2].result))
+check("confirmation cleared by the auto-bust", core.S.flightConfirmed == false)
+check("auto-bust resets the timer back to the target", core.S.timerObj:value() == 60,
   tostring(core.S.timerObj:value()))
-check("press after confirm does not clear confirmation", core.S.flightConfirmed == true)
-check("attempts unchanged by a post-confirm press", core.S.game.bets[2].attempts == 1,
+check("attempts NOT incremented by the re-grip itself", core.S.game.bets[2].attempts == 1,
   "attempts=" .. tostring(core.S.game.bets[2].attempts))
 
-setSrc("MOM_LAUNCH", -100); core.wakeup()    -- spurious release too
-check("release after confirm does not increment attempts either", core.S.game.bets[2].attempts == 1,
+setSrc("MOM_LAUNCH", -100); core.wakeup()    -- release: the retry's real throw
+check("retry counts as a fresh attempt", core.S.game.bets[2].attempts == 2,
   "attempts=" .. tostring(core.S.game.bets[2].attempts))
+check("retry is pending again, not stuck on bust", core.S.game.bets[2].result == "pending",
+  tostring(core.S.game.bets[2].result))
+check("retry target unchanged (same bet, re-do the same time)", core.S.game.bets[2].target_s == 60,
+  tostring(core.S.game.bets[2].target_s))
 
 -- ---- Test 14: liveTimerValue() -- the new public accessor screen.lua
 -- needs to actually show a live countdown instead of a frozen number
@@ -448,9 +466,9 @@ setSrc("LANDING_MODE", -100); core.wakeup()
 
 -- ---- Test 19: FS1/FS4 on SUMMARY and LOG do the CORRECT thing for
 -- THOSE screens (view log / new game / back), and specifically do NOT
--- fall through to the SETUP/LIVE-specific roles (confirmBet/allIn/bumpMin)
--- that caused the original bug (a stray CONFIRM press on SUMMARY
--- overwriting an already-resolved bet's target with stale edit values)
+-- fall through to the SETUP/LIVE-specific roles (allIn/bumpMin/cancelArm)
+-- that caused the original bug (a stray FS4 press on SUMMARY overwriting
+-- an already-resolved bet's target with stale edit values)
 
 core.S.screen = core.SCREEN.SUMMARY
 core.S.game.armed = false
@@ -615,6 +633,23 @@ check("game finalized to SUMMARY", core.S.screen == core.SCREEN.SUMMARY)
 local endVal = core.S.timerObj:value()
 check("timer silenced at game end", endVal ~= nil and math.abs(endVal) < 1,
   tostring(endVal))
+
+-- ---- Test 24: a throw with nothing edited (0:00) is ignored, not armed
+-- as a zero-second bet -- the guard confirmBet() used to have, now living
+-- in handleLaunchFall's auto-confirm branch instead
+
+core.S.screen = core.SCREEN.LIVE
+core.S.game.armed = false
+core.S.game.allInPending = false
+core.S.game.idx = 1
+core.S.game.editMin, core.S.game.editSec = 0, 0
+core.S.game.bets[1] = { idx = 1, target_s = nil, result = "pending", attempts = 0, scored_s = 0, allIn = false }
+setSrc("ZOOM_MODE", -100)
+setSrc("MOM_LAUNCH", 100); core.wakeup()
+setSrc("MOM_LAUNCH", -100); core.wakeup()
+check("a 0:00 throw does not arm the bet", core.S.game.armed == false)
+check("a 0:00 throw does not count as an attempt", core.S.game.bets[1].attempts == 0,
+  "attempts=" .. tostring(core.S.game.bets[1].attempts))
 
 print("")
 if failures == 0 then print("ALL TESTS PASSED")

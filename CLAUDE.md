@@ -111,14 +111,42 @@ appears** in the System menu, with no error anywhere. Always pass
 **Launch detection model** (core.lua, "launch (revised, field-tested)"
 section) — this went through several field-corrected iterations, driven
 directly by the DLG-for-Ethos template's actual flight-mode logic:
+0. **No separate CONFIRM step** (removed 2026-09 per pilot field-test
+   feedback — `core.confirmBet()` no longer exists). A bet is armed by the
+   throw itself: if `handleLaunchFall()` (step 2) fires while the bet
+   isn't armed yet, it locks in whatever `editMin`/`editSec` was showing
+   at that instant as `target_s`, arms the bet, and proceeds exactly like
+   an already-armed release — all in the same event. ALL IN is unaffected
+   (`core.allIn()` still arms explicitly, ahead of the throw, since it has
+   no fixed target yet to auto-confirm from).
 1. **Press** (`MOM_LAUNCH` rises) = priming/re-grip. Resets the timer to the
-   bet's target — but only if not yet confirmed (see step 3).
+   bet's target — but only if not yet confirmed (see step 3), and only if
+   the bet is already armed (a press before the bet's first-ever throw does
+   nothing — there's no target yet to reset to).
 2. **Release** (`MOM_LAUNCH` falls) = the actual throw. Starts the timer
-   counting and counts as an attempt.
+   counting and counts as an attempt (and, per step 0, arms the bet first
+   if it wasn't already).
 3. **Elevator push/pull** (`ZOOM_MODE` transitions true→false) = confirms a
    genuine flight happened. Until this fires, a landing signal (brakes) is
    ignored — protects against ground-fumbling falsely scoring a hit/bust.
-   Once confirmed, the timer is **locked**: further presses do nothing.
+   Once confirmed, the timer is **locked**: further presses/releases do
+   nothing *while the flight is still genuinely in progress* — see step 3a.
+3a. **Landed without braking** (pilot field-test report, 2026-09): if
+   `LANDING_MODE` never fires (e.g. overshoots downwind and just runs it
+   in), the bet used to stay confirmed-and-armed forever, and step 3's
+   lockout made BOTH steps 1 and 2 permanent no-ops for it — a second
+   throw sequence did nothing at all, so the physical timer (never
+   stopped or reset) just silently kept counting straight through the
+   landing and the next launch. Fixed via `autoBustUnresolvedFlight()`,
+   called at the top of both `handleLaunchRise()` and `handleLaunchFall()`:
+   if the bet is armed, confirmed, and still unresolved (`result ==
+   "pending"`) when a NEW throw sequence begins, that's treated as the
+   pilot's own unambiguous signal the previous flight is over — it's
+   auto-busted (not scored as a hit; they didn't achieve the target,
+   that's why they're re-launching) and the new throw proceeds normally
+   from there, restarting the same target fresh. A real landing (brakes)
+   is completely unaffected by this — it still resolves the attempt the
+   normal way, via step 5.
 4. **Exception**: once the timer counts down to zero (target reached), the
    confirmation requirement is waived — that much real elapsed time already
    rules out ground-fumbling regardless of whether the elevator gesture

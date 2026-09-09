@@ -27,10 +27,13 @@ voice announcements well.
    defaults.
 2. Press **START**. The game clock begins and the first bet is live.
 3. Bump the bet up with **+SEC** (adds 10s, rolling into +1 min past 50s)
-   or **+MIN** (adds 1 min), then **CONFIRM** to lock it in — this sets
-   your target Ethos timer's start value to that duration.
-4. Launch. The radio's own configured countdown beeps/voice alerts count
-   the bet down as normal; DLG Poker doesn't add anything to that.
+   or **+MIN** (adds 1 min) — on touch-capable radios (e.g. X20RS), tap
+   the up/down arrows next to the time instead, which can also count
+   back down. Then just **launch**: releasing the glider locks in
+   whatever time was showing and starts your target Ethos timer counting
+   down, in the same motion — no separate confirm press.
+4. The radio's own configured countdown beeps/voice alerts count the bet
+   down as normal; DLG Poker doesn't add anything to that.
 5. Land. Landing is detected from a debounced Landing-mode/brake signal
    (an instant brake tap mid-flight is ignored) the moment you land:
    - Timer already reached zero → **Hit**, the bet's time is scored, and
@@ -38,9 +41,15 @@ voice announcements well.
    - Timer still counting → **Bust** — the bet stays locked, and
      launching again (**Retry**) restarts the same countdown with no
      extra button press needed.
+   - Landed without braking (e.g. overshot on a downwind leg and just ran
+     it in)? Going through the throw sequence again automatically busts
+     the unresolved attempt and restarts the same countdown, exactly like
+     an explicit Bust — you don't need to touch anything else first.
 6. **ALL IN** claims whatever time is left in the game window as your
    bet — computed at the moment you actually launch, not when you press
-   the button.
+   the button. Unlike a normal bet, ALL IN still needs its own button
+   press before you throw, since there's no edited time on screen for the
+   throw itself to lock in.
 7. After every bet in the game is resolved (or the window runs out), a
    summary shows each bet's result and the total score, logged for later
    review (recent games, best game, running average).
@@ -56,9 +65,9 @@ voice announcements well.
 - **Landing detection** — Lua-timed or native-logic-switch mode, which
   switch to watch, and a debounce threshold so a quick accidental brake
   tap mid-flight doesn't end a bet early.
-- **Controls** — switch assignment for +MIN / +SEC / ALL IN / CONFIRM
-  (defaults to the X14's Function Switches FS1–FS4), a hold-to-reset
-  threshold, and a stuck-switch warning.
+- **Controls** — switch assignment for +MIN / +SEC / ALL IN /
+  START-CANCEL-NEXT (defaults to the X14's Function Switches FS1–FS4), a
+  hold-to-reset threshold, and a stuck-switch warning.
 - **Display** — day or night mode.
 
 ## Installation
@@ -110,11 +119,14 @@ transmitter's internal storage — use whichever your radio is set up with.
 
 ## Status
 
-Field-tested on a real X14; a few known gaps are tracked in
-[`CLAUDE.md`](./CLAUDE.md#known-open-items-as-of-last-session) (e.g. X20RS
-hardware behavior for one timer API path is still unconfirmed, and the
-log screen's per-game detail view isn't built yet). Version `0.1` —
-actively evolving, not a finished 1.0.
+Field-tested on a real X14. Touch-capable radios (e.g. X20RS) are
+supported too — footer keys and the MIN/SEC up/down arrows are tappable
+directly, with a fix for a double-fire quirk some touch radios have where
+a single tap could otherwise register as two. A few known gaps are
+tracked in [`CLAUDE.md`](./CLAUDE.md#known-open-items-as-of-last-session)
+(e.g. X20RS hardware behavior for one timer API path is still
+unconfirmed, and the log screen's per-game detail view isn't built yet).
+Version `0.2` — actively evolving, not a finished 1.0.
 
 ## Development
 

@@ -18,7 +18,7 @@
 --     confirmed, not assumed
 
 local core = {}
-core.VERSION = "0.1"
+core.VERSION = "0.2"
 
 -- ---------------------------------------------------------------- constants
 
@@ -496,6 +496,16 @@ end
 function core.bumpMin() adjustTarget(1, 0) end
 function core.bumpSec() adjustTarget(0, 10) end
 
+-- Decrement counterparts (pilot request, 2026-09): FS1/FS2 and the
+-- footer MIN/SEC keys can only count up -- a touch pilot had no way to
+-- walk a value back down short of the hold-to-reset gesture, which zeros
+-- the whole field rather than nudging it. adjustTarget already takes a
+-- signed delta and applies the same SETUP-vs-bet-edit dispatch and floor
+-- (0, or SETUP's 60s) either way, so these are just the negative calls --
+-- no new clamping logic needed.
+function core.bumpMinDown() adjustTarget(-1, 0) end
+function core.bumpSecDown() adjustTarget(0, -10) end
+
 -- Hold-to-reset (S5.1): zero whichever field +MIN/+SEC currently affects.
 -- Split into two, one per field (Defect 3): holding +MIN must zero only
 -- the minutes portion, leaving seconds untouched, and vice versa for
@@ -527,23 +537,6 @@ end
 function core.bumpBets(delta)
   if S.screen ~= SCREEN.SETUP then return end
   S.setupBets = ((S.setupBets - 1 + delta) % 5) + 1
-end
-
--- CONFIRM: locks the currently-edited bet at a fixed value and preloads
--- the timer immediately (S4 step 4) -- the actual countdown only starts
--- for real on the next MOM_LAUNCH edge (S6.2).
-function core.confirmBet()
-  local g = S.game
-  if not g or g.armed then return end
-  local bet = currentBet()
-  bet.target_s = g.editMin * 60 + g.editSec
-  if bet.target_s <= 0 then return end   -- nothing to bet, ignore
-  g.armed = true
-  g.allInPending = false
-  S.flightConfirmed = false   -- every newly-armed bet starts its own fresh
-  S.prevZoomConfirm = nil     -- press/release/elevator-exit cycle
-  timerSet(bet.target_s)
-  core.setStatus("armed")
 end
 
 -- ALL IN (FS3, S8): marks the bet as a claim. The real number is computed
@@ -666,13 +659,47 @@ end
 -- evidence of a re-grip -- there is no case where sampling ZOOM_MODE adds
 -- information this simpler rule does not already have.
 
+-- Landed-without-braking auto-bust (pilot request, 2026-09, field test).
+-- pollLanding() is the ONLY path that ever resolves an in-flight bet
+-- (hit or bust) -- it depends entirely on the LANDING_MODE switch (brakes)
+-- going active. If a flight was confirmed (elevator push happened, so
+-- flightConfirmed is latched true) but the pilot lands WITHOUT braking
+-- (e.g. overshoots downwind and just runs it in), LANDING_MODE never
+-- fires: the bet is left "armed" with a still-latched flightConfirmed and
+-- an unresolved "pending" result forever, which used to make BOTH
+-- handleLaunchRise and handleLaunchFall permanent no-ops for that bet --
+-- their whole point is "once confirmed, only brakes end the attempt" --
+-- so a second throw sequence did nothing at all: the physical timer, never
+-- stopped or reset, just kept counting on exactly as it already was.
+-- Going through the throw sequence again is itself the pilot's own
+-- unambiguous signal that the previous flight is over, so treat it as an
+-- automatic bust (not a hit -- they didn't achieve the target, that's why
+-- they're re-launching) before letting the new throw proceed normally.
+local function autoBustUnresolvedFlight()
+  local g = S.game
+  if not g or not g.armed then return end
+  if not S.flightConfirmed then return end
+  local bet = currentBet()
+  if bet.result ~= "pending" then return end   -- already hit/bust -- nothing to auto-resolve
+  bet.result = "bust"
+  S.flightConfirmed = false
+  S.prevZoomConfirm = nil
+  timerSet(0)
+  timerReset()
+  core.setStatus("bust (landed without braking) - relaunch to retry")
+end
+
 local function handleLaunchRise()
   local g = S.game
   if not g or not g.armed then return end
+  autoBustUnresolvedFlight()
   -- Once the elevator-exit gesture has confirmed a real flight, the
   -- countdown is locked in -- a press can no longer reset it. Physically
   -- there is no way to re-grip a flying glider, and once confirmed, only
   -- brakes (pollLanding, gated on this same flag) can end the attempt.
+  -- (autoBustUnresolvedFlight() above already clears a stale confirmed
+  -- flight left over from a brake-less landing, so this only blocks a
+  -- genuinely still-in-progress confirmed flight.)
   if S.flightConfirmed then return end
   if g.allInPending then return end   -- no concrete target yet to reset to
   local bet = currentBet()
@@ -686,7 +713,26 @@ end
 
 local function handleLaunchFall()
   local g = S.game
-  if not g or not g.armed then return end
+  if not g then return end
+  if not g.armed then
+    -- Auto-confirm (pilot request, 2026-09): CONFIRM used to be a
+    -- separate required press before a throw did anything. Now the throw
+    -- itself IS the confirmation -- releasing while still on the editing
+    -- screen locks in whatever MIN:SEC was showing at that instant and
+    -- arms the bet, in one motion, at the exact same instant the timer
+    -- actually starts (matching how a confirmed bet's first launch has
+    -- always worked). ALL IN is unaffected -- it's still its own explicit
+    -- pre-throw action (core.allIn(), g.armed already true by the time a
+    -- throw happens), so this branch only fires for a direct throw.
+    local editBet = currentBet()
+    editBet.target_s = g.editMin * 60 + g.editSec
+    if editBet.target_s <= 0 then return end   -- nothing to bet, ignore (same guard confirmBet used to have)
+    g.armed = true
+    g.allInPending = false
+    S.flightConfirmed = false
+    S.prevZoomConfirm = nil
+  end
+  autoBustUnresolvedFlight()
   -- Same lock-in as handleLaunchRise: once confirmed, the launch switch
   -- has no further effect on the timer at all, deliberately, even a
   -- spurious release signal.
@@ -1035,27 +1081,25 @@ function core.wakeup()
   -- game running yet), otherwise its existing confirm/cancel job. This was
   -- missing entirely before -- FS4 always ran the LIVE-screen logic, which
   -- silently no-ops when there is no game yet, so START never fired.
+  -- FS4/"confirm" no longer arms a bet (pilot request, 2026-09) -- a
+  -- throw does that now, see handleLaunchFall()'s auto-confirm branch.
+  -- What's left of this role: START on SETUP, and on LIVE, NEXT BET
+  -- (after a hit) or CANCEL (only reachable pre-throw via ALL IN, which
+  -- still arms explicitly ahead of the throw). Not-yet-armed on LIVE now
+  -- has nothing for FS4 to do at all.
   pollRole("confirm", S.confirmSwitchSrc, function()
     if S.screen == SCREEN.SETUP then
       core.startGame()
       return
     end
-    -- Only SETUP and LIVE have any business responding to CONFIRM at all --
-    -- this was falling through to confirmBet() on SUMMARY/LOG too (armed
-    -- is false there, same as "not yet armed" on LIVE), which could
-    -- silently overwrite an already-resolved bet's target with stale
-    -- editMin/editSec left over from the last edit.
     if S.screen ~= SCREEN.LIVE then return end
     local g = S.game
-    if g and g.armed then
-      local bet = currentBet()
-      if bet and bet.result == "hit" then
-        core.nextBet()
-      else
-        core.cancelArm()
-      end
+    if not g or not g.armed then return end
+    local bet = currentBet()
+    if bet and bet.result == "hit" then
+      core.nextBet()
     else
-      core.confirmBet()
+      core.cancelArm()
     end
   end, false, nil)
 end
