@@ -256,6 +256,34 @@ with zero indication why.
   reference before using it (get/set pattern, same as `direction()`/
   `countingSource()`/`start()` already established in this file).
 
+## LOG screen navigation fixes (2026-09, screen.lua only)
+
+Two real bugs from a pilot field report, both in `screen.event()`'s
+ROTARY/ENTER handling, which is entirely LOG-specific and not covered by
+the core.lua harness:
+
+- **Scrolling had no upper bound.** `logTop = math.max(1, logTop + d)`
+  floored at 1 but never capped -- scrolling right past the actual game
+  count left `logTop > #games`, and `paintLog()`'s draw loop
+  (`for i = logTop, math.min(logTop + rows - 1, #games) do`) then has an
+  empty range, so nothing renders at all. With few games logged this is
+  trivially easy to hit (one or two clicks past a 3-game list), and reads
+  as "the whole log vanished" rather than "you've scrolled past the
+  oldest game." Fixed by caching `logGameCount`/`logVisibleRows` (set by
+  `paintLog()` every frame -- same pattern `keyRects`/`valueRects`
+  already use for paint-computes/event-consumes) and clamping to
+  `math.max(1, logGameCount - logVisibleRows + 1)` as the ceiling.
+- **BACK was unreachable via ENTER.** LOG's ROTARY is fully dedicated to
+  list-scrolling (see above), so unlike every other screen, it never
+  moves `focus[SCREEN.LOG]` -- that stays stuck at its initial value (1)
+  forever, meaning ENTER always tried to `activate()` whatever's at
+  index 1 (OPEN, before it was removed -- see the open-items list above).
+  BACK was only reachable via the FS4 physical switch or the native
+  RTN/EXIT key, with nothing on screen indicating either. Fixed by
+  special-casing `KEY_ENTER_BREAK` on `SCREEN.LOG` to look up and
+  `activate()` whichever footer slot is labelled `"BACK"` directly,
+  bypassing `focus[]` entirely for this one screen.
+
 ## Test workflow (follow this before shipping any core.lua change)
 
 Two ready-to-run scripts do this for you — no snippets to reconstruct:
@@ -325,6 +353,9 @@ install, not just closing/reopening the tool.
    added will display bet count without a hit fraction (graceful, not a bug,
    but worth knowing if a log display looks slightly inconsistent for old
    data).
-4. `OPEN` (FS1 on the LOG screen) has no functionality yet — viewing a
-   single game's per-bet breakdown from the log list was never built,
-   deliberately left as a placeholder (spec-noted, not forgotten).
+4. Viewing a single game's per-bet breakdown from the log list was never
+   built (spec-noted, not forgotten). The `OPEN` footer key that used to
+   sit there as a placeholder for it was removed entirely 2026-09 (pilot
+   report: a visible button that does nothing reads as broken, not as
+   "not built yet") — LOG's footer is just `{"-","-","-","BACK"}` now.
+   Revisit both together if this view gets built.

@@ -1128,9 +1128,9 @@ function core.wakeup()
     return
   end
   if S.screen == SCREEN.LOG then
-    -- FS1/OPEN has no functionality yet (viewing a single game's detail
-    -- breakdown is not built) -- deliberately not wired to anything,
-    -- matching its current on-screen placeholder status.
+    -- FS1 has no functionality here -- OPEN (viewing a single game's
+    -- detail breakdown, never built) was removed from the footer
+    -- entirely (pilot request, 2026-09; see screen.lua's keysFor).
     pollRole("back", S.confirmSwitchSrc, function()
       S.screen = SCREEN.SUMMARY
     end, false, nil)

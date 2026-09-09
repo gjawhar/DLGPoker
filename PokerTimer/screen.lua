@@ -132,6 +132,13 @@ local ROTARY_EDIT_FIELDS = {
 }
 local rotaryEditField = nil
 local logTop = 1
+-- Cached by paintLog() every frame so the rotary handler in screen.event()
+-- can clamp logTop to a real upper bound (pilot report, 2026-09: scrolling
+-- right had no ceiling at all -- past the actual game count it just
+-- rendered nothing, looking like the whole list vanished, rather than
+-- stopping once the oldest game was in view).
+local logGameCount = 0
+local logVisibleRows = 1
 
 -- ---------------------------------------------------------------- S1 setup
 
@@ -157,7 +164,11 @@ local function keysFor(scr)
   -- two keys stretched to half the screen each -- previously these had no
   -- relationship at all to the physical FS row above the screen.
   if scr == SCREEN.SUMMARY then return { "VIEW GAME LOG", "-", "-", "NEW GAME" } end
-  if scr == SCREEN.LOG then return { "OPEN", "-", "-", "BACK" } end
+  -- OPEN removed (pilot request, 2026-09) -- it was a speced-but-never-
+  -- built placeholder (per-bet detail view for a selected game) that did
+  -- nothing when pressed, which read as broken rather than "not built
+  -- yet." Revisit if that detail view gets built later.
+  if scr == SCREEN.LOG then return { "-", "-", "-", "BACK" } end
   return {}
 end
 
@@ -589,6 +600,7 @@ local function paintLog(w, h)
 
   local games = core.recentGames(20)
   local avg5, best = core.gameStats()
+  logGameCount = #games
 
   -- Surfaced here for the first time -- previously a storage/write failure
   -- (S.ioError, set by appendRow/rewrite on any I/O error) was silently
@@ -620,6 +632,7 @@ local function paintLog(w, h)
 
   local cy = CONTENT_TOP + 24
   local rows = math.floor((h - cy - 70) / 20)
+  logVisibleRows = math.max(1, rows)
   -- Wrapped defensively: a single malformed CSV row (a partial write from
   -- an earlier crash/power-loss, for instance) should degrade to a
   -- placeholder line, not take down the whole screen with a hard error.
@@ -896,7 +909,14 @@ function screen.event(value, x, y)
       local fn = (d > 0) and field.up or field.down
       for _ = 1, math.abs(d) do fn() end
     elseif scr == SCREEN.LOG then
-      logTop = math.max(1, logTop + d)
+      -- Clamped at both ends (pilot report, 2026-09): previously only
+      -- floored at 1, with no ceiling -- scrolling right past the actual
+      -- game count rendered nothing at all (logTop > #games means the
+      -- paintLog() draw loop's range is empty), which looked like the
+      -- whole list had vanished rather than stopping once the oldest
+      -- game was in view.
+      local maxTop = math.max(1, logGameCount - logVisibleRows + 1)
+      logTop = math.max(1, math.min(maxTop, logTop + d))
     else
       local keys = keysFor(scr)
       if #keys > 0 then
@@ -910,6 +930,22 @@ function screen.event(value, x, y)
     if rotaryEditField then
       rotaryEditField = nil   -- second ENTER leaves edit mode
       return true
+    end
+    -- LOG's ROTARY is fully dedicated to scrolling the list (see above),
+    -- so focus[SCREEN.LOG] never moves off its initial value -- ENTER
+    -- would otherwise always try to activate whatever that stuck value
+    -- happens to be (OPEN, a placeholder that does nothing -- see
+    -- keysFor) and BACK would be unreachable except via the FS4 physical
+    -- switch or RTN/EXIT (pilot report, 2026-09: exactly this gap).
+    -- ENTER goes straight to BACK on this one screen instead.
+    if scr == SCREEN.LOG then
+      local keys = keysFor(scr)
+      for i, lbl in ipairs(keys) do
+        if lbl == "BACK" then
+          activate(scr, i)
+          return true
+        end
+      end
     end
     -- Rotary edit mode (pilot request, 2026-09): ENTER on MIN/SEC/BETS
     -- starts editing that field directly instead of just bumping it once
