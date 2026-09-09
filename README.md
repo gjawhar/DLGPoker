@@ -48,15 +48,18 @@ voice announcements well.
      launching again (**Retry**) restarts the same countdown with no
      extra button press needed.
    - Landed without braking (e.g. overshot on a downwind leg and just ran
-     it in)? Going through the throw sequence again automatically busts
-     the unresolved attempt and restarts the same countdown, exactly like
-     an explicit Bust. This also covers relaunching (deliberately or by
-     accident) before you've landed at all — e.g. bumping the launch
-     switch after already reaching the target — so DLG Poker gives an
-     audible tone and a vibration at that exact moment: there's no way to
-     tell "genuinely landed and relaunching" from "still flying, switch
-     bumped by accident" from the switch signal alone, so it alerts you
-     either way rather than resetting the timer silently.
+     it in), or the launch switch gets touched again before a landing was
+     ever detected at all — even by accident, e.g. mid-flight after
+     already reaching the target? DLG Poker can't tell "genuinely landed
+     and relaunching" from "still flying, switch bumped by accident" from
+     the switch signal alone, so either way it busts the stranded attempt,
+     gives an audible tone and a vibration, and drops you back on the
+     editing screen — the same screen a brand new bet starts from,
+     pre-filled with the interrupted bet's own time. That throw itself
+     does **not** restart anything by itself; a separate, deliberate
+     launch from that screen is what actually arms and starts again
+     (same as step 3 above) — the alert is meant to make you look at the
+     screen, not to auto-continue past it.
 6. **ALL IN** claims whatever time is left in the game window as your
    bet — computed at the moment you actually launch, not when you press
    the button. Unlike a normal bet, ALL IN still needs its own button

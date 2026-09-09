@@ -666,36 +666,50 @@ local function paintKeys(w, h, scr)
     configIdx = 5
   end
 
-  local kw = math.floor(w / #topKeys)
-  lcd.font(FONT_S)
+  -- Nothing to press (pilot request, 2026-09): if every slot in the row
+  -- is "-" -- e.g. mid-flight, when none of the footer keys do anything
+  -- until landing -- the row is pure clutter, four empty bordered boxes
+  -- with nothing behind them. Skip drawing it entirely rather than
+  -- rendering four dashes; the CONFIG button (drawn separately below, if
+  -- present) is unaffected either way.
+  local anyActive = false
   for i = 1, #topKeys do
-    local kx = (i - 1) * kw
-    local label = topKeys[i]
-    -- Rotary edit mode (pilot request, 2026-09): scroll focus to MIN/SEC,
-    -- press ENTER to start editing it directly -- rotary scroll then
-    -- bumps that field up/down instead of moving focus, press ENTER again
-    -- to leave. Filled instead of outlined so it reads as unmistakably
-    -- different from plain focus -- "you're inside this field now."
-    local editing = rotaryEditField and focus[scr] == i
-      and label == (rotaryEditField == "min" and "MIN" or "SEC")
-    draw.color(t.border)
-    lcd.drawRectangle(kx + 1, ky, kw - 2, kh - 2, 1)
-    if editing then
-      draw.color(t.accent)
-      lcd.drawFilledRectangle(kx, ky, kw, kh - 1)
-    elseif focus[scr] == i then
-      draw.color(t.accent)
-      lcd.drawRectangle(kx, ky, kw, kh - 1, 2)
-    end
-    if editing then
-      draw.color(t.bg)
-    else
-      draw.color((label == "-") and t.dim or t.txt)
-    end
-    local tw = lcd.getTextSize(label)
-    draw.text(kx + math.floor((kw - tw) / 2), ky + 8, label, kw - 4)
-    if isTouchCapable() and label ~= "-" then
-      keyRects[i] = { x = kx, y = ky, w = kw, h = kh }
+    if topKeys[i] ~= "-" then anyActive = true break end
+  end
+
+  if anyActive then
+    local kw = math.floor(w / #topKeys)
+    lcd.font(FONT_S)
+    for i = 1, #topKeys do
+      local kx = (i - 1) * kw
+      local label = topKeys[i]
+      -- Rotary edit mode (pilot request, 2026-09): scroll focus to
+      -- MIN/SEC, press ENTER to start editing it directly -- rotary
+      -- scroll then bumps that field up/down instead of moving focus,
+      -- press ENTER again to leave. Filled instead of outlined so it
+      -- reads as unmistakably different from plain focus -- "you're
+      -- inside this field now."
+      local editing = rotaryEditField and focus[scr] == i
+        and label == (rotaryEditField == "min" and "MIN" or "SEC")
+      draw.color(t.border)
+      lcd.drawRectangle(kx + 1, ky, kw - 2, kh - 2, 1)
+      if editing then
+        draw.color(t.accent)
+        lcd.drawFilledRectangle(kx, ky, kw, kh - 1)
+      elseif focus[scr] == i then
+        draw.color(t.accent)
+        lcd.drawRectangle(kx, ky, kw, kh - 1, 2)
+      end
+      if editing then
+        draw.color(t.bg)
+      else
+        draw.color((label == "-") and t.dim or t.txt)
+      end
+      local tw = lcd.getTextSize(label)
+      draw.text(kx + math.floor((kw - tw) / 2), ky + 8, label, kw - 4)
+      if isTouchCapable() and label ~= "-" then
+        keyRects[i] = { x = kx, y = ky, w = kw, h = kh }
+      end
     end
   end
 

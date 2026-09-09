@@ -131,22 +131,38 @@ directly by the DLG-for-Ethos template's actual flight-mode logic:
    ignored — protects against ground-fumbling falsely scoring a hit/bust.
    Once confirmed, the timer is **locked**: further presses/releases do
    nothing *while the flight is still genuinely in progress* — see step 3a.
-3a. **Landed without braking** (pilot field-test report, 2026-09): if
-   `LANDING_MODE` never fires (e.g. overshoots downwind and just runs it
-   in), the bet used to stay confirmed-and-armed forever, and step 3's
-   lockout made BOTH steps 1 and 2 permanent no-ops for it — a second
-   throw sequence did nothing at all, so the physical timer (never
-   stopped or reset) just silently kept counting straight through the
-   landing and the next launch. Fixed via `autoBustUnresolvedFlight()`,
-   called at the top of both `handleLaunchRise()` and `handleLaunchFall()`:
-   if the bet is armed, confirmed, and still unresolved (`result ==
-   "pending"`) when a NEW throw sequence begins, that's treated as the
-   pilot's own unambiguous signal the previous flight is over — it's
-   auto-busted (not scored as a hit; they didn't achieve the target,
-   that's why they're re-launching) and the new throw proceeds normally
-   from there, restarting the same target fresh. A real landing (brakes)
-   is completely unaffected by this — it still resolves the attempt the
-   normal way, via step 5.
+3a. **Landed without braking, or the switch touched again before any
+   landing at all** (pilot field-test reports, 2026-09, two rounds): if
+   `LANDING_MODE` never fires (overshoots downwind and runs it in), OR the
+   pilot's hand brushes `MOM_LAUNCH` while genuinely still airborne (there
+   is no way to tell these apart from the switch signal alone), the bet
+   used to stay confirmed-and-armed forever, and step 3's lockout made
+   BOTH steps 1 and 2 permanent no-ops for it — a second throw sequence
+   did nothing at all, so the physical timer (never stopped or reset)
+   just silently kept counting straight through. Fixed via
+   `autoBustUnresolvedFlight()`, called at the top of both
+   `handleLaunchRise()` and `handleLaunchFall()`: if the bet is armed,
+   confirmed, and still unresolved (`result == "pending"`) when a NEW
+   throw sequence begins, that's auto-busted (not scored as a hit) and
+   plays an audible tone + haptic (`system.playTone`/`playHaptic`,
+   confirmed present since Ethos 1.1.0) since this is otherwise a
+   completely silent correction the pilot has no other way to notice.
+   **Revised 2026-09 (second field-test round) to NOT auto-restart the
+   countdown**: the first version of this fix re-armed and restarted
+   immediately on the SAME throw's release, which defeated the alert's
+   whole point ("stop and look at the screen") since nothing actually
+   made the pilot look. Now `autoBustUnresolvedFlight()` also sets
+   `g.armed = false`, pre-fills `g.editMin`/`g.editSec` from the
+   interrupted bet's own `target_s` (so the editing screen shows a
+   matching, ready-to-relaunch time), and sets
+   `S.suppressNextAutoConfirm = true` so the release half of THIS SAME
+   throw doesn't immediately fall into step 0's auto-confirm and re-arm
+   right back — `handleLaunchFall()` checks that flag first and, if set,
+   clears it and returns without arming. A genuinely separate, subsequent
+   throw is what actually arms+starts again, going through step 0 exactly
+   like any other bet. A real landing (brakes) is completely unaffected
+   by any of this — it still resolves the attempt the normal way, via
+   step 5, and stays armed for an immediate retry as it always has.
 4. **Exception**: once the timer counts down to zero (target reached), the
    confirmation requirement is waived — that much real elapsed time already
    rules out ground-fumbling regardless of whether the elevator gesture
@@ -182,6 +198,22 @@ then-scroll design solves the same problem (reaching 0 without wrapping
 through the whole range) using only `KEY_ENTER_BREAK`/`KEY_ROTARY_LEFT`/
 `KEY_ROTARY_RIGHT`, all three already proven reliable elsewhere in this
 file, so there was no reason to take on that risk.
+
+## Footer row hides itself when nothing is actionable (2026-09, paintKeys)
+
+`keysFor(LIVE)` returns `{"-","-","-","-"}` while a bet is mid-flight
+(armed, `attempts > 0`, not yet resolved) — none of the four keys do
+anything until landing. `paintKeys()` now checks whether every slot in
+`topKeys` is `"-"` and skips drawing the row entirely in that case
+(pilot request: "no reason to have the buttons up there"), rather than
+rendering four empty bordered boxes. The CONFIG button (SETUP's 5th key,
+drawn separately in the bottom-right corner) is unaffected either way.
+**Note**: this only hides the row — it does not reflow the content below
+it, which is still positioned from the fixed `CONTENT_TOP = CHROME_H +
+KEY_ROW_H` constant regardless of whether the row actually drew anything,
+so hiding it currently just leaves that space blank rather than reclaimed
+for the countdown display. Revisit if that blank strip turns out to
+bother pilots in practice.
 
 ## Test workflow (follow this before shipping any core.lua change)
 

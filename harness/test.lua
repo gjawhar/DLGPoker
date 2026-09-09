@@ -361,6 +361,7 @@ setSrc("LANDING_MODE", -100); core.wakeup()
 -- autoBustUnresolvedFlight() in core.lua.)
 
 core.S.game.bets[2] = { idx = 2, target_s = 60, result = "pending", attempts = 0, scored_s = 0, allIn = false }
+core.S.game.armed = true
 core.S.flightConfirmed = false
 core.S.prevZoomConfirm = nil
 setSrc("ZOOM_MODE", -100)
@@ -370,6 +371,12 @@ setSrc("MOM_LAUNCH", -100); core.wakeup()   -- release 1, attempt 1
 setSrc("ZOOM_MODE", -100); core.wakeup()     -- confirms flight
 check("confirmed after first release+exit", core.S.flightConfirmed == true)
 
+-- Revised design (2026-09, field feedback on the FIRST version of this
+-- fix): the alert's whole point is "stop and look at the screen" -- if
+-- the release right after it immediately restarted the countdown anyway,
+-- the pilot never actually had to look. So this throw's OWN release must
+-- land cleanly on the editing screen, not auto-arm back into a fresh
+-- attempt; only a genuinely separate, subsequent throw does that.
 tick(5)   -- flies around a while, lands long without ever braking
 local toneCallsBefore, hapticCallsBefore = alertCalls.tone, alertCalls.haptic
 setSrc("MOM_LAUNCH", 100); core.wakeup()     -- re-grip: going through the throw sequence again
@@ -380,17 +387,25 @@ check("auto-bust plays an audible alert", alertCalls.tone > toneCallsBefore,
   "tone calls=" .. tostring(alertCalls.tone))
 check("auto-bust plays a haptic alert", alertCalls.haptic > hapticCallsBefore,
   "haptic calls=" .. tostring(alertCalls.haptic))
-check("auto-bust resets the timer back to the target", core.S.timerObj:value() == 60,
-  tostring(core.S.timerObj:value()))
-check("attempts NOT incremented by the re-grip itself", core.S.game.bets[2].attempts == 1,
+check("un-armed back to the editing screen, not counting down", core.S.game.armed == false)
+check("edit fields pre-filled from the interrupted bet's own target",
+  core.S.game.editMin == 1 and core.S.game.editSec == 0,
+  "editMin=" .. tostring(core.S.game.editMin) .. " editSec=" .. tostring(core.S.game.editSec))
+
+setSrc("MOM_LAUNCH", -100); core.wakeup()    -- release: tail end of the SAME throw
+check("same-throw release does not re-arm", core.S.game.armed == false)
+check("same-throw release does not count as a new attempt", core.S.game.bets[2].attempts == 1,
   "attempts=" .. tostring(core.S.game.bets[2].attempts))
 
-setSrc("MOM_LAUNCH", -100); core.wakeup()    -- release: the retry's real throw
-check("retry counts as a fresh attempt", core.S.game.bets[2].attempts == 2,
+-- A genuinely separate, deliberate throw is what actually arms+starts again
+setSrc("MOM_LAUNCH", 100); core.wakeup()
+setSrc("MOM_LAUNCH", -100); core.wakeup()
+check("separate throw arms the same bet again", core.S.game.armed == true)
+check("separate throw counts as a fresh attempt", core.S.game.bets[2].attempts == 2,
   "attempts=" .. tostring(core.S.game.bets[2].attempts))
-check("retry is pending again, not stuck on bust", core.S.game.bets[2].result == "pending",
+check("separate throw is pending again, not stuck on bust", core.S.game.bets[2].result == "pending",
   tostring(core.S.game.bets[2].result))
-check("retry target unchanged (same bet, re-do the same time)", core.S.game.bets[2].target_s == 60,
+check("separate throw target unchanged (same bet, re-do the same time)", core.S.game.bets[2].target_s == 60,
   tostring(core.S.game.bets[2].target_s))
 
 -- ---- Test 14: liveTimerValue() -- the new public accessor screen.lua
@@ -582,9 +597,16 @@ check("landingActive did not latch stuck after the error",
 setSrc("LANDING_MODE", -100); core.wakeup()
 
 -- Repair state and confirm a fresh attempt scores normally afterward --
--- proving recovery is real, not just "didn't crash the test file"
+-- proving recovery is real, not just "didn't crash the test file". Also
+-- resets flightConfirmed/prevZoomConfirm -- left over true from before
+-- the simulated error, that combination is now exactly what
+-- autoBustUnresolvedFlight() treats as "relaunched before landing was
+-- detected" (correctly, elsewhere -- just not what THIS test means to
+-- exercise, so it has to clear the same fields a real recovery would).
 core.S.game.score = 0
 core.S.game.bets[1].result = "pending"
+core.S.flightConfirmed = false
+core.S.prevZoomConfirm = nil
 setSrc("ZOOM_MODE", 100)
 setSrc("MOM_LAUNCH", 100); core.wakeup()
 setSrc("MOM_LAUNCH", -100); core.wakeup()

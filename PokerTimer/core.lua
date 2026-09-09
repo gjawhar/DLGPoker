@@ -81,6 +81,11 @@ local S = {
   flightConfirmed  = false,
   prevZoomConfirm  = nil,
 
+  -- Set by autoBustUnresolvedFlight() so the SAME throw's release
+  -- doesn't immediately auto-confirm right back into a new attempt --
+  -- see that function's own comment.
+  suppressNextAutoConfirm = false,
+
   -- game = nil until START; see startGame()
   game = nil,
 
@@ -682,6 +687,20 @@ local function alertUnresolvedRelaunch()
   pcall(function() system.playHaptic(300) end)
 end
 
+-- Un-arms back to the editing screen rather than auto-restarting a
+-- countdown (pilot request, 2026-09, revised from the first version of
+-- this fix): the alert's whole point is "stop and look at the screen" --
+-- if the very next thing that happens is the timer silently restarting
+-- anyway, the pilot never actually had to look. So this puts them back
+-- at the SAME screen a brand new bet starts from, pre-filled with the
+-- interrupted bet's own target (so re-throwing immediately reproduces
+-- the same bet, or they can adjust it first) -- a deliberate, separate
+-- throw is what actually arms+starts again, same as any other bet.
+-- S.suppressNextAutoConfirm exists specifically so THAT deliberate throw
+-- has to be a genuinely separate press: without it, the release half of
+-- THIS SAME throw (the one that triggered the alert) would immediately
+-- fall into handleLaunchFall's auto-confirm branch below and re-arm
+-- right back, defeating the point just as much as not un-arming at all.
 local function autoBustUnresolvedFlight()
   local g = S.game
   if not g or not g.armed then return end
@@ -693,7 +712,12 @@ local function autoBustUnresolvedFlight()
   S.prevZoomConfirm = nil
   timerSet(0)
   timerReset()
-  core.setStatus("bust (relaunched before landing was detected) - relaunch to retry")
+  g.armed = false
+  g.allInPending = false
+  g.editMin = math.floor((bet.target_s or 0) / 60)
+  g.editSec = (bet.target_s or 0) % 60
+  S.suppressNextAutoConfirm = true
+  core.setStatus("relaunched before landing was detected - place your next bet")
   alertUnresolvedRelaunch()
 end
 
@@ -701,13 +725,12 @@ local function handleLaunchRise()
   local g = S.game
   if not g or not g.armed then return end
   autoBustUnresolvedFlight()
+  if not g.armed then return end   -- autoBustUnresolvedFlight() just un-armed
+                                     -- this bet; nothing left here to reset
   -- Once the elevator-exit gesture has confirmed a real flight, the
   -- countdown is locked in -- a press can no longer reset it. Physically
   -- there is no way to re-grip a flying glider, and once confirmed, only
   -- brakes (pollLanding, gated on this same flag) can end the attempt.
-  -- (autoBustUnresolvedFlight() above already clears a stale confirmed
-  -- flight left over from a brake-less landing, so this only blocks a
-  -- genuinely still-in-progress confirmed flight.)
   if S.flightConfirmed then return end
   if g.allInPending then return end   -- no concrete target yet to reset to
   local bet = currentBet()
@@ -723,6 +746,13 @@ local function handleLaunchFall()
   local g = S.game
   if not g then return end
   if not g.armed then
+    if S.suppressNextAutoConfirm then
+      -- This release is the tail end of the same throw whose RISE just
+      -- triggered autoBustUnresolvedFlight() -- land cleanly on the
+      -- editing screen instead of using it to auto-arm right back.
+      S.suppressNextAutoConfirm = false
+      return
+    end
     -- Auto-confirm (pilot request, 2026-09): CONFIRM used to be a
     -- separate required press before a throw did anything. Now the throw
     -- itself IS the confirmation -- releasing while still on the editing
@@ -741,6 +771,9 @@ local function handleLaunchFall()
     S.prevZoomConfirm = nil
   end
   autoBustUnresolvedFlight()
+  if not g.armed then return end   -- autoBustUnresolvedFlight() just un-armed
+                                     -- this bet (defensive: normally rise
+                                     -- already caught this before fall runs)
   -- Same lock-in as handleLaunchRise: once confirmed, the launch switch
   -- has no further effect on the timer at all, deliberately, even a
   -- spurious release signal.
