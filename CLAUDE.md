@@ -173,18 +173,24 @@ directly by the DLG-for-Ethos template's actual flight-mode logic:
    rule out an accidental in-flight brake tap) = ends the attempt, scoring
    hit or bust based on whether the timer had reached zero.
 
-## Rotary/FS edit mode for MIN/SEC (2026-09, screen.lua only)
+## Rotary/FS edit mode for MIN/SEC/BETS (2026-09, screen.lua only)
 
-On a rotary/FS radio (no touch), scrolling focus to MIN or SEC and
-pressing ENTER now starts editing that field directly: `rotaryEditField`
-(`nil | "min" | "sec"`, module-local in screen.lua) switches ROTARY scroll
-from moving footer focus to calling `core.bumpMin`/`bumpMinDown`/
-`bumpSec`/`bumpSecDown` directly (same functions/granularity the touch
-arrow steppers already use) — bidirectional, unlike the plain MIN/SEC
-footer keys which only ever bump up. ENTER again, or RTN/EXIT, leaves
-edit mode. `screen.paint()` self-heals it to `nil` if the focused key
-stops being MIN/SEC out from under it (e.g. a real throw arms the bet
-mid-edit).
+On a rotary/FS radio (no touch), scrolling focus to MIN, SEC, or BETS
+and pressing ENTER now starts editing that field directly: `rotaryEditField`
+(`nil | "min" | "sec" | "bets"`, module-local in screen.lua) switches
+ROTARY scroll from moving footer focus to calling that field's up/down
+functions directly instead — looked up from `ROTARY_EDIT_FIELDS`, a small
+table mapping each field to its `{label, up, down}` (MIN/SEC use
+`core.bumpMin`/`bumpMinDown`/`bumpSec`/`bumpSecDown`, same as the touch
+arrow steppers; BETS wraps `core.bumpBets(1)`/`core.bumpBets(-1)` since
+that one already took a signed delta). Bidirectional either way, unlike
+the plain footer keys which only ever bump up (BETS's footer key still
+wraps 5→1 on overshoot, unchanged). ENTER again, or RTN/EXIT, leaves edit
+mode. `screen.paint()` self-heals it to `nil` if the focused key stops
+matching that field's label out from under it (e.g. a real throw arms
+the bet mid-edit). BETS got this same treatment on SETUP's touch layout
+too (a single arrow-stepper column to the right of its value, mirroring
+MINUTES/SECONDS) — pilot request, 2026-09: "same pattern as min and sec."
 
 **Deliberately does NOT use a long-press-ENTER gesture** (a `KEY_ENTER_LONG`-
 style "hold to reset" mirroring the FS-switch hold-to-reset) even though

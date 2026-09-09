@@ -116,13 +116,20 @@ local CONTENT_TOP = CHROME_H + KEY_ROW_H   -- everything else starts here
 
 local focus = { [SCREEN.SETUP] = 1, [SCREEN.LIVE] = 1, [SCREEN.SUMMARY] = 1, [SCREEN.LOG] = 1 }
 
--- Rotary edit mode: nil | "min" | "sec". While set, ROTARY scroll bumps
--- that field directly (via the same core.bumpMin/bumpMinDown/bumpSec/
--- bumpSecDown already used by touch's arrow steppers) instead of moving
--- footer focus. Set/cleared from screen.event()'s KEY_ENTER_BREAK/
--- KEY_RTN_FIRST/KEY_EXIT_FIRST handling below; self-heals in
--- screen.paint() if the focused key stops being MIN/SEC out from under it
--- (e.g. a real throw arms the bet mid-edit).
+-- Rotary edit mode: nil | "min" | "sec" | "bets". While set, ROTARY
+-- scroll bumps that field directly instead of moving footer focus --
+-- same up/down functions the touch arrow steppers already use for each
+-- field (BETS included, pilot request, 2026-09: "same pattern as min and
+-- sec" -- core.bumpBets() already took a signed delta, just needed the
+-- same up/down wiring MIN/SEC already have). Set/cleared from
+-- screen.event()'s KEY_ENTER_BREAK/KEY_RTN_FIRST/KEY_EXIT_FIRST handling
+-- below; self-heals in screen.paint() if the focused key stops matching
+-- out from under it (e.g. a real throw arms the bet mid-edit).
+local ROTARY_EDIT_FIELDS = {
+  min  = { label = "MIN",  up = core.bumpMin, down = core.bumpMinDown },
+  sec  = { label = "SEC",  up = core.bumpSec, down = core.bumpSecDown },
+  bets = { label = "BETS", up = function() core.bumpBets(1) end, down = function() core.bumpBets(-1) end },
+}
 local rotaryEditField = nil
 local logTop = 1
 
@@ -191,9 +198,10 @@ local function paintSetup(w, h)
   if isTouchCapable() then
     -- WINDOW gets its own centred row, flanked by big MINUTES/SECONDS
     -- arrow columns (pilot request, 2026-09) -- minutes to the left of
-    -- the time indicator, seconds to the right. BETS moves to its own
-    -- simpler row below since it isn't a duration and wasn't part of
-    -- this request; it still only changes via the footer BETS key.
+    -- the time indicator, seconds to the right. BETS gets the same
+    -- treatment below (pilot request, 2026-09: "same pattern as min and
+    -- sec") -- one column, to the right of its value, since it's a
+    -- single field rather than two.
     lcd.font(FONT_S)
     draw.color(t.dim2)
     local windowLbl = "WINDOW"
@@ -227,14 +235,24 @@ local function paintSetup(w, h)
     local betsLbl = "BETS"
     draw.text(math.floor((w - lcd.getTextSize(betsLbl)) / 2), cy, betsLbl)
     cy = cy + 16
+
     lcd.font(FONT_XL)
+    local valBetsW = lcd.getTextSize(betsStr)
+    local betsTotalW = valBetsW + rowGap + ARROW_COL_W
+    local betsValueX = math.floor((w - betsTotalW) / 2)
+    local betsColX = betsValueX + valBetsW + rowGap
+
     draw.color(t.txt)
-    draw.text(math.floor((w - lcd.getTextSize(betsStr)) / 2), cy, betsStr)
+    draw.text(betsValueX, cy, betsStr)
+
+    local betsColY = cy + math.floor(valH / 2) - math.floor(ARROW_COL_TOTAL_H / 2)
+    drawArrowStepper(t, betsColX, betsColY, "BETS",
+      function() core.bumpBets(1) end, function() core.bumpBets(-1) end)
 
     cy = h - 40
     lcd.font(FONT_S)
     draw.color(t.dim)
-    draw.text(6, cy, "tap BETS above to cycle - CONFIG bottom right", w - 12)
+    draw.text(6, cy, "CONFIG bottom right", w - 12)
   else
     -- True centred-pair-with-gap layout, matching the mockup's flex
     -- centering, rather than fixed offsets from the midpoint -- each
@@ -673,13 +691,13 @@ local function paintKeys(w, h, scr)
       local kx = (i - 1) * kw
       local label = topKeys[i]
       -- Rotary edit mode (pilot request, 2026-09): scroll focus to
-      -- MIN/SEC, press ENTER to start editing it directly -- rotary
+      -- MIN/SEC/BETS, press ENTER to start editing it directly -- rotary
       -- scroll then bumps that field up/down instead of moving focus,
       -- press ENTER again to leave. Filled instead of outlined so it
       -- reads as unmistakably different from plain focus -- "you're
       -- inside this field now."
       local editing = rotaryEditField and focus[scr] == i
-        and label == (rotaryEditField == "min" and "MIN" or "SEC")
+        and label == ROTARY_EDIT_FIELDS[rotaryEditField].label
       draw.color(t.border)
       lcd.drawRectangle(kx + 1, ky, kw - 2, kh - 2, 1)
       if editing then
@@ -734,8 +752,9 @@ function screen.paint(w, h)
                      -- screen (SUMMARY/LOG) that never repopulates it.
   local scr = core.S.screen
   if rotaryEditField then
-    local expected = (rotaryEditField == "min") and "MIN" or "SEC"
-    if keysFor(scr)[focus[scr] or 1] ~= expected then rotaryEditField = nil end
+    if keysFor(scr)[focus[scr] or 1] ~= ROTARY_EDIT_FIELDS[rotaryEditField].label then
+      rotaryEditField = nil
+    end
   end
   -- Wrapped defensively -- confirmed a real bug (CONFIRM reachable on
   -- SUMMARY/LOG, corrupting bet data) via code review after a hard Ethos
@@ -846,12 +865,11 @@ function screen.event(value, x, y)
     local d = (value == KEY_ROTARY_RIGHT) and n or -n
     if rotaryEditField then
       -- In edit mode: scroll bumps the field directly, same granularity
-      -- (whole minutes / 10s) as the footer key and the touch arrow
-      -- steppers -- reuses those exact functions rather than inventing a
-      -- separate step size.
-      local upFn = (rotaryEditField == "min") and core.bumpMin or core.bumpSec
-      local downFn = (rotaryEditField == "min") and core.bumpMinDown or core.bumpSecDown
-      local fn = (d > 0) and upFn or downFn
+      -- (whole minutes / 10s / 1 bet) as the footer key and the touch
+      -- arrow steppers -- reuses those exact functions rather than
+      -- inventing a separate step size.
+      local field = ROTARY_EDIT_FIELDS[rotaryEditField]
+      local fn = (d > 0) and field.up or field.down
       for _ = 1, math.abs(d) do fn() end
     elseif scr == SCREEN.LOG then
       logTop = math.max(1, logTop + d)
@@ -869,14 +887,16 @@ function screen.event(value, x, y)
       rotaryEditField = nil   -- second ENTER leaves edit mode
       return true
     end
-    -- Rotary edit mode (pilot request, 2026-09): ENTER on MIN/SEC starts
-    -- editing that field directly instead of just bumping it once --
-    -- matches Ethos's own "focus a field, press ENTER, scroll to adjust"
-    -- pattern rather than treating MIN/SEC as plain one-shot buttons.
+    -- Rotary edit mode (pilot request, 2026-09): ENTER on MIN/SEC/BETS
+    -- starts editing that field directly instead of just bumping it once
+    -- -- matches Ethos's own "focus a field, press ENTER, scroll to
+    -- adjust" pattern rather than treating them as plain one-shot buttons.
     local label = keysFor(scr)[focus[scr] or 1]
-    if label == "MIN" or label == "SEC" then
-      rotaryEditField = (label == "MIN") and "min" or "sec"
-      return true
+    for key, field in pairs(ROTARY_EDIT_FIELDS) do
+      if field.label == label then
+        rotaryEditField = key
+        return true
+      end
     end
     activate(scr, focus[scr] or 1)
     return true
