@@ -367,19 +367,20 @@ setSrc("LANDING_MODE", -100); core.wakeup()
 
 -- ---- Test 13: once confirmed (flying), a LANDING signal (brakes) is what
 -- ends the attempt in the normal case -- but a fresh throw sequence while
--- still confirmed-and-unresolved (pilot landed WITHOUT braking, e.g.
--- overshot downwind and ran it in) must not be a silent no-op: it should
--- auto-bust the stranded attempt and start a brand new one at the same
--- target. (Pilot field-test report, 2026-09: this used to be a permanent
--- no-op -- the physical timer, never stopped or reset, just kept counting
--- straight through the "landing" and the next throw, silently -- see
--- autoBustUnresolvedFlight() in core.lua.)
+-- still confirmed-and-unresolved (pilot never brakes) must not be a
+-- silent no-op. (Pilot field-test report, 2026-09: this used to be a
+-- permanent no-op -- the physical timer, never stopped or reset, just
+-- kept counting straight through the "landing" and the next throw,
+-- silently -- see autoBustUnresolvedFlight() in core.lua.)
 
 core.S.game.deadline = os.time() + 600   -- explicit, generous window --
                                            -- decouples this test from
                                            -- cumulative elapsed time in
                                            -- every earlier test
+core.S.game.betCount = 3
+core.S.game.idx = 2
 core.S.game.bets[2] = { idx = 2, target_s = 60, result = "pending", attempts = 0, scored_s = 0, allIn = false }
+core.S.game.bets[3] = { idx = 3, target_s = nil, result = "pending", attempts = 0, scored_s = 0, allIn = false }
 core.S.game.armed = true
 core.S.flightConfirmed = false
 core.S.prevZoomConfirm = nil
@@ -390,60 +391,59 @@ setSrc("MOM_LAUNCH", -100); core.wakeup()   -- release 1, attempt 1
 setSrc("ZOOM_MODE", -100); core.wakeup()     -- confirms flight
 check("confirmed after first release+exit", core.S.flightConfirmed == true)
 
--- Revised design (2026-09, field feedback on the FIRST version of this
--- fix): the alert's whole point is "stop and look at the screen" -- if
--- the release right after it immediately restarted the countdown anyway,
--- the pilot never actually had to look. So this throw's OWN release must
--- land cleanly on the editing screen, not auto-arm back into a fresh
--- attempt; only a genuinely separate, subsequent throw does that.
---
--- Further revised (2026-09, second field report): that whole "go back to
--- the editing screen, throw a THIRD time" flow turned out to only be
--- right for THIS case -- the target already reached, no brakes. Tick
--- PAST the 60s target here specifically so this test still exercises
--- that case; see Test 13b right below for the "still counting" case,
--- which now behaves differently on purpose.
-tick(65)   -- flies around a while, lands long without ever braking --
-            -- well past the 60s target
+-- Fourth field-test round, 2026-09: "the user succeeded" reaching the
+-- target while still flying should score as a HIT and advance to the
+-- next bet, the same as a real braked landing at/past the target would
+-- -- NOT bust-and-retry-the-same-bet (that was this mechanism's original
+-- design, from an earlier round, and has since been reversed for this
+-- specific already-reached case; see the comment above
+-- autoBustUnresolvedFlight() in core.lua for the full history).
+tick(65)   -- flies around a while, well past the 60s target -- ran the
+            -- clock out successfully, then relaunches instead of braking
 local toneCallsBefore, hapticCallsBefore = alertCalls.tone, alertCalls.haptic
--- Re-grip: going through the throw sequence again. Held via pump(), not a
--- single core.wakeup(), since MOM_LAUNCH now has to be debounced
--- (relaunchDebounce, default 1/3s = 14 calls at the 40/s test rate) --
--- pilot request, 2026-09, third field-test round: a brief brush must not
--- bust anything at all. pump(0.4) = 16 calls, comfortably past 14.
+local scoreBefore = core.S.game.score
+-- Held via pump(), not a single core.wakeup() -- MOM_LAUNCH is debounced
+-- (relaunchDebounce, default 1/3s = 14 calls at the 40/s test rate) even
+-- on this branch, simply because pollRelaunchDebounce() gates entry into
+-- autoBustUnresolvedFlight() unconditionally; pump(0.4) = 16 calls,
+-- comfortably past 14.
 setSrc("MOM_LAUNCH", 100)
 pump(0.4)
-check("stranded attempt auto-busted on re-grip", core.S.game.bets[2].result == "bust",
+check("target-reached relaunch scores as a HIT, not a bust", core.S.game.bets[2].result == "hit",
   tostring(core.S.game.bets[2].result))
-check("confirmation cleared by the auto-bust", core.S.flightConfirmed == false)
--- No alert anymore (pilot request, 2026-09, third field-test round,
--- same as the debounce above): removed once the debounce made a real
--- relaunch reliably distinguishable from a brush -- a deliberate hold
--- doesn't need an alarm either.
-check("auto-bust plays NO audible alert anymore", alertCalls.tone == toneCallsBefore,
-  "tone calls=" .. tostring(alertCalls.tone))
-check("auto-bust plays NO haptic alert anymore", alertCalls.haptic == hapticCallsBefore,
-  "haptic calls=" .. tostring(alertCalls.haptic))
-check("un-armed back to the editing screen, not counting down", core.S.game.armed == false)
-check("edit fields pre-filled from the interrupted bet's own target",
-  core.S.game.editMin == 1 and core.S.game.editSec == 0,
+check("scored seconds credited", core.S.game.bets[2].scored_s == 60,
+  "scored_s=" .. tostring(core.S.game.bets[2].scored_s))
+check("score increased by the target", core.S.game.score == scoreBefore + 60,
+  "score=" .. tostring(core.S.game.score))
+check("confirmation cleared", core.S.flightConfirmed == false)
+check("advanced to the next bet", core.S.game.idx == 3, "idx=" .. tostring(core.S.game.idx))
+check("un-armed, not counting down", core.S.game.armed == false)
+check("edit fields reset to the plain default, not the old bet's target",
+  core.S.game.editMin == 0 and core.S.game.editSec == 30,
   "editMin=" .. tostring(core.S.game.editMin) .. " editSec=" .. tostring(core.S.game.editSec))
+-- Alert RESTORED for this branch specifically (pilot correction, 2026-09,
+-- fourth round): the earlier removal (third round) was scoped to the
+-- still-counting branch only -- this one still wants it.
+check("auto-hit plays an audible alert", alertCalls.tone > toneCallsBefore,
+  "tone calls=" .. tostring(alertCalls.tone))
+check("auto-hit plays a haptic alert", alertCalls.haptic > hapticCallsBefore,
+  "haptic calls=" .. tostring(alertCalls.haptic))
 
 setSrc("MOM_LAUNCH", -100); core.wakeup()    -- release: tail end of the SAME throw
-check("same-throw release does not re-arm", core.S.game.armed == false)
-check("same-throw release does not count as a new attempt", core.S.game.bets[2].attempts == 1,
-  "attempts=" .. tostring(core.S.game.bets[2].attempts))
+check("same-throw release does not auto-arm bet 3", core.S.game.armed == false)
+check("same-throw release does not count as an attempt on bet 3", core.S.game.bets[3].attempts == 0,
+  "attempts=" .. tostring(core.S.game.bets[3].attempts))
 
--- A genuinely separate, deliberate throw is what actually arms+starts again
+-- A genuinely separate, deliberate throw is what actually arms+starts bet 3
 setSrc("MOM_LAUNCH", 100); core.wakeup()
 setSrc("MOM_LAUNCH", -100); core.wakeup()
-check("separate throw arms the same bet again", core.S.game.armed == true)
-check("separate throw counts as a fresh attempt", core.S.game.bets[2].attempts == 2,
-  "attempts=" .. tostring(core.S.game.bets[2].attempts))
-check("separate throw is pending again, not stuck on bust", core.S.game.bets[2].result == "pending",
-  tostring(core.S.game.bets[2].result))
-check("separate throw target unchanged (same bet, re-do the same time)", core.S.game.bets[2].target_s == 60,
-  tostring(core.S.game.bets[2].target_s))
+check("separate throw arms bet 3", core.S.game.armed == true)
+check("separate throw counts as bet 3's first attempt", core.S.game.bets[3].attempts == 1,
+  "attempts=" .. tostring(core.S.game.bets[3].attempts))
+check("separate throw is pending, not stuck on hit", core.S.game.bets[3].result == "pending",
+  tostring(core.S.game.bets[3].result))
+check("separate throw locks in the default 0:30 target", core.S.game.bets[3].target_s == 30,
+  tostring(core.S.game.bets[3].target_s))
 
 -- ---- Test 13b: relaunching while the timer is STILL COUNTING (target
 -- not yet reached) is a different situation from the above -- pilot

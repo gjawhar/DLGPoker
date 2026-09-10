@@ -349,21 +349,23 @@ local function paintLive(w, h)
     -- this paints.
     --
     -- Gated on `bet.attempts == 0` (pilot report, 2026-09, real hardware:
-    -- got an auto-bust alert from relaunching bet 2 before landing, but
-    -- the screen still showed "BET 1: HIT +10s credited" with no mention
-    -- of what had actually just happened to bet 2 -- easy to misread as
-    -- "that relaunch just registered as a hit"). The original comment
-    -- here reasoned this couldn't show stale info because g.idx only ever
-    -- moves forward via a real hit -- true, but it missed that g.idx
-    -- DOESN'T move on autoBustUnresolvedFlight() (screen.lua's own
-    -- ROTARY_EDIT_FIELDS-style un-arm-and-retry path in core.lua): a mid-
-    -- flight relaunch returns to this SAME not-armed screen for the SAME
-    -- bet, with g.idx-1's hit banner still technically true but now
-    -- describing an unrelated, older event. `attempts == 0` is exactly
-    -- "nothing has happened to the CURRENT bet yet" -- true right after a
-    -- genuine hit-advance, false the instant any throw (successful or
-    -- auto-busted) touches the new bet -- so the banner now disappears
-    -- precisely when it stops being about what just happened.
+    -- the banner used to be visible for as long as g.idx-1 stayed "hit,"
+    -- regardless of whether anything newer had happened to the CURRENT
+    -- bet in the meantime). `attempts == 0` is exactly "nothing has
+    -- happened to the CURRENT bet yet" -- true right after a genuine
+    -- hit-advance, false the instant any throw touches the new bet -- so
+    -- the banner disappears precisely when it stops being about what
+    -- just happened.
+    --
+    -- Note: reaching the target and then relaunching instead of braking
+    -- ALSO credits a hit and advances via this exact same path (pilot
+    -- request, 2026-09, fourth field-test round -- see
+    -- autoBustUnresolvedFlight() in core.lua) -- there's no separate
+    -- "auto-busted, re-editing the same bet" state to show here anymore,
+    -- since that design was reversed: un-arming to retry the SAME bet is
+    -- now only what the STILL-COUNTING relaunch case does, and that case
+    -- never un-arms at all (g.armed stays true throughout), so it never
+    -- reaches this "not armed" branch in the first place.
     if g.idx > 1 and g.bets[g.idx - 1].result == "hit" and bet.attempts == 0 then
       lcd.font(FONT_S)
       local hitMsg = string.format("BET %d: HIT +%ds credited", g.idx - 1, g.bets[g.idx - 1].scored_s or 0)
@@ -375,21 +377,6 @@ local function paintLive(w, h)
       local hitBw, hitBh = draw.badgeSize(hitMsg)
       draw.badge(math.floor((w - hitBw) / 2), cy, hitMsg, t.good, t.goodBg)
       cy = cy + hitBh + 12
-    elseif bet.result == "bust" and bet.attempts > 0 then
-      -- The actual feedback for the scenario above: THIS bet (not the
-      -- previous one) was auto-busted because a new throw sequence
-      -- started before a landing was ever detected -- core.lua's
-      -- autoBustUnresolvedFlight(). Un-armed back to this same editing
-      -- screen rather than staying armed (unlike a normal in-flight bust,
-      -- which keeps counting down and shows its own dedicated BUST
-      -- screen) is exactly what made this state invisible before: there
-      -- was nothing here distinguishing "fresh, never-attempted bet" from
-      -- "just auto-busted, re-editing the same bet."
-      lcd.font(FONT_S)
-      local bustMsg = string.format("BET %d: relaunched before landing - bet again", g.idx)
-      local bustBw, bustBh = draw.badgeSize(bustMsg)
-      draw.badge(math.floor((w - bustBw) / 2), cy, bustMsg, t.bad, t.badBg)
-      cy = cy + bustBh + 12
     end
 
     lcd.font(FONT_XL)

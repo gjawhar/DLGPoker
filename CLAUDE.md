@@ -163,12 +163,13 @@ directly by the DLG-for-Ethos template's actual flight-mode logic:
        `handleLaunchFall()`'s own attempts-increment/`result = "pending"`
        logic (unchanged) is what turns the SAME throw's release into the
        actual new attempt.
-     - **Already reached** (`liveVal <= 0`): unchanged from the second
-       round — sets `g.armed = false`, pre-fills `g.editMin`/`g.editSec`
-       from the interrupted bet's own `target_s`, and sets
-       `S.suppressNextAutoConfirm = true` so the release half of THIS
-       SAME throw doesn't immediately fall into step 0's auto-confirm and
-       re-arm right back.
+     - **Already reached** (`liveVal <= 0`): behavior at THIS point in
+       the history — superseded by the fifth round below, kept here only
+       for the narrative — sets `g.armed = false`, pre-fills
+       `g.editMin`/`g.editSec` from the interrupted bet's own `target_s`,
+       and sets `S.suppressNextAutoConfirm = true` so the release half of
+       THIS SAME throw doesn't immediately fall into step 0's
+       auto-confirm and re-arm right back.
    - **Fourth round**: "the user could brush up against the launch button
      but won't hold it for say, more than a third of a second... just let
      them continue the flight" — plus "remove the vibration and audio
@@ -191,10 +192,43 @@ directly by the DLG-for-Ethos template's actual flight-mode logic:
        flag, letting the (unchanged) fall-through logic in each handler
        pick up correctly whichever way it resolved.
      - **`alertUnresolvedRelaunch()` (the `system.playTone`/`playHaptic`
-       calls) was deleted outright**, not just silenced conditionally —
-       once a real relaunch is reliably distinguishable from a brush by
-       the debounce above, neither case needs an alarm: a brush is now a
-       complete no-op, and a deliberate hold doesn't need one either.
+       calls) was deleted outright, from BOTH branches** — this turned
+       out to be scoped too broadly; see the fifth round below.
+   - **Fifth round**: two corrections after actually field-testing the
+     fourth round's changes.
+     - The alert removal above was meant only for the still-counting
+       branch (the whole conversation was about accidental brushes mid-
+       flight) — the pilot explicitly flagged that the already-reached
+       branch still wants it. Restored there: the same
+       `system.playTone`/`playHaptic` calls, now inlined directly in that
+       branch rather than a shared `alertUnresolvedRelaunch()` (which had
+       exactly one remaining caller once removed from the other branch).
+     - **The already-reached branch itself changed**: "the user
+       succeeded" (ran the timer all the way down while still flying) —
+       relaunching instead of braking at that point should score a HIT
+       and advance to the next bet, mirroring `pollLanding()`'s own hit
+       branch exactly (`bet.result = "hit"`, `bet.scored_s =
+       bet.target_s`, `g.score` credited, then `advanceBet()`) — NOT bust
+       and return to re-editing the SAME bet, which is what the second/
+       third rounds above had built. `S.suppressNextAutoConfirm` is still
+       set, for the same reason as before: the pilot is still physically
+       mid-throw when this fires, with no realistic pause to look at and
+       adjust bet N+1's own target before this SAME throw's release would
+       otherwise auto-confirm it sight-unseen at whatever default
+       `advanceBet()` just reset `editMin`/`editSec` to.
+
+       **screen.lua consequence**: the red "BET N: relaunched before
+       landing - bet again" badge added for the old un-arm-and-retry
+       design (in `paintLive`'s `not g.armed` branch) became genuinely
+       unreachable dead code once this changed — nothing produces
+       `g.armed == false` with `bet.result == "bust"` for the CURRENT bet
+       anymore (the still-counting branch busts but never un-arms; the
+       already-reached branch now hits instead of busting). Removed
+       outright rather than left in place. The existing "BET N: HIT
+       +Ns credited" banner (gated on `bet.attempts == 0`, see the
+       "Fix stale HIT banner" history) already covers this scenario
+       correctly with no changes — core.lua doesn't distinguish WHY a bet
+       scored a hit, and screen.lua doesn't need to either.
 
    A real landing (brakes) is completely unaffected by any of this — it
    still resolves the attempt the normal way, via step 5, and stays armed

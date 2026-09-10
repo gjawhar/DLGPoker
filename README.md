@@ -54,28 +54,27 @@ voice announcements well.
    - The launch switch gets held again before a landing was ever detected
      at all — without ever braking first? DLG Poker can't tell "genuinely
      landed and relaunching" from "still flying, switch touched on
-     purpose" from the switch signal alone, so it busts the stranded
-     attempt either way — but only once the switch has been held for
-     **more than about a third of a second**. A quick accidental brush of
-     the switch shorter than that is completely ignored — nothing
-     changes, no bust, silent — so it's safe to fly with a hand near the
-     switch without it costing you the attempt. No tone or vibration
-     either way, intentional or accidental — once a brief brush can't
-     trigger this at all, an alert for the genuine case isn't needed.
-     What happens next depends on whether the timer had already reached
-     zero at the moment the hold crossed that threshold:
-     - **Still counting** (well before the target) → the bust is
-       immediate and so is the retry: the SAME target starts counting
-       down again right away, no extra button press needed — same feel
-       as a normal Bust-and-Retry above, just triggered by a relaunch
-       instead of a real landing.
-     - **Already at/past the target** (e.g. overshot on a downwind leg
-       and just ran it in without braking) → drops you back on the
-       editing screen instead — the same screen a brand new bet starts
-       from, pre-filled with the interrupted bet's own time. That throw
-       itself does **not** restart anything by itself here; a separate,
-       deliberate launch from that screen is what actually arms and
-       starts again (same as step 3 above).
+     purpose" from the switch signal alone, so it treats the stranded
+     attempt as resolved either way — but only once the switch has been
+     held for **more than about a third of a second**. A quick accidental
+     brush of the switch shorter than that is completely ignored —
+     nothing changes at all, silent — so it's safe to fly with a hand
+     near the switch without it costing you the attempt. What happens
+     once the hold crosses that threshold depends on whether the timer
+     had already reached zero at that moment:
+     - **Still counting** (well before the target) → **Bust**, and the
+       retry is immediate: the SAME target starts counting down again
+       right away, no extra button press needed, no tone or vibration —
+       same feel as a normal Bust-and-Retry above, just triggered by a
+       relaunch instead of a real landing.
+     - **Already at/past the target** → **Hit**. You flew for at least
+       the full target duration, so relaunching instead of formally
+       landing still counts — the bet's time is scored and the game
+       moves on to the next bet's editing screen, showing "BET N: HIT
+       +Ns credited" right alongside it, exactly like a normal Hit above.
+       Gets an audible tone and a vibration, since this one really is
+       worth looking up from the glider for — you're about to place a
+       whole new bet on the very next throw.
 6. **ALL IN** claims whatever time is left in the game window as your
    bet — computed at the moment you actually launch, not when you press
    the button. Unlike a normal bet, ALL IN still needs its own button

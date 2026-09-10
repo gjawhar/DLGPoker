@@ -696,73 +696,73 @@ end
 -- evidence of a re-grip -- there is no case where sampling ZOOM_MODE adds
 -- information this simpler rule does not already have.
 
--- Landed-without-braking auto-bust (pilot request, 2026-09, field test).
--- pollLanding() is the ONLY path that ever resolves an in-flight bet
--- (hit or bust) -- it depends entirely on the LANDING_MODE switch (brakes)
--- going active. If a flight was confirmed (elevator push happened, so
--- flightConfirmed is latched true) but the pilot lands WITHOUT braking
--- (e.g. overshoots downwind and just runs it in), LANDING_MODE never
--- fires: the bet is left "armed" with a still-latched flightConfirmed and
--- an unresolved "pending" result forever, which used to make BOTH
--- handleLaunchRise and handleLaunchFall permanent no-ops for that bet --
--- their whole point is "once confirmed, only brakes end the attempt" --
--- so a second throw sequence did nothing at all: the physical timer, never
--- stopped or reset, just kept counting on exactly as it already was.
--- Going through the throw sequence again is itself the pilot's own
--- unambiguous signal that the previous flight is over, so treat it as an
--- automatic bust (not a hit -- they didn't achieve the target, that's why
--- they're re-launching) before letting the new throw proceed normally.
+-- Landed-without-braking / relaunched-before-landing (pilot request,
+-- 2026-09, field test). pollLanding() is the ONLY path that scores a hit
+-- or bust via an actual landing (LANDING_MODE/brakes going active). If a
+-- flight was confirmed (elevator push happened) but the pilot never
+-- brakes -- either because they overshoot and just keep flying, or
+-- because they go straight into another throw sequence -- LANDING_MODE
+-- never fires: the bet used to stay "armed" with a still-latched
+-- flightConfirmed forever, making a second throw sequence a permanent
+-- no-op (the physical timer, never stopped or reset, just kept counting
+-- straight through). Going through the throw sequence again is itself
+-- the pilot's own unambiguous signal that the previous flight is over.
 --
 -- Two different responses depending on whether the target had already
--- been reached at the moment of the relaunch (pilot report, 2026-09, real
--- hardware: relaunched well before the target with the timer still
--- actively counting, and expected the old bet to bust and the SAME
--- target to immediately start counting down again -- not the "go back to
--- an editable screen, throw a THIRD time" flow this used to apply
--- unconditionally. Those two situations turned out to want different
--- handling, not one rule for both):
+-- been reached at the moment of the relaunch -- these turned out to be
+-- genuinely different situations across two separate field reports, not
+-- one rule that covers both:
 --
--- STILL COUNTING (liveVal > 0): almost certainly either a genuine new
--- attempt at the same bet or an accidental mid-flight switch bump -- both
--- want the SAME outcome, so just restart the SAME target immediately, no
--- extra throw required. Mechanically this is identical to the ground
--- re-grip path handleLaunchRise() already has for `not S.flightConfirmed`
--- -- clearing S.flightConfirmed here (armed stays true) is what lets that
--- same "reset timer, wait for the release to actually start a fresh
--- attempt" logic run for a CONFIRMED flight too, rather than only for a
--- pre-confirmation ground re-grip.
+-- STILL COUNTING (liveVal > 0): relaunched well before the target, timer
+-- still actively counting -- almost certainly either a genuine new
+-- attempt at the same bet or an accidental mid-flight switch bump. Busts
+-- the old attempt and restarts the SAME target immediately, no extra
+-- throw required -- see the "no alert" note below, this is the branch
+-- that's guarded by pollRelaunchDebounce() specifically because it also
+-- has to tolerate an accidental brush. Mechanically identical to the
+-- ground re-grip path handleLaunchRise() already has for `not
+-- S.flightConfirmed` -- clearing that flag here is what lets the same
+-- "reset timer, wait for the release to actually start a fresh attempt"
+-- logic run for a CONFIRMED flight too.
 --
--- ALREADY REACHED (liveVal <= 0), no brakes: the ORIGINAL report this
--- mechanism was built for (pilot request, 2026-09: "you should be on a
--- bet screen at that point... place the bet and launch from there").
--- Un-arms back to the editing screen instead of auto-restarting -- a
--- deliberate, separate throw is what actually arms+starts again.
--- S.suppressNextAutoConfirm exists specifically so THAT deliberate throw
--- has to be a genuinely separate press: without it, the release half of
--- THIS SAME throw would immediately fall into handleLaunchFall's
--- auto-confirm branch below and re-arm right back, defeating the point
--- just as much as not un-arming at all.
+-- ALREADY REACHED (liveVal <= 0): the pilot flew for AT LEAST the full
+-- target duration -- pilot request, 2026-09, fourth field-test round:
+-- "the user succeeded" (ran the clock out) should score as a HIT and
+-- advance to the next bet, the same as a real braked landing at/past the
+-- target would (pollLanding()'s own hit branch, mirrored here). This is
+-- NOT the still-counting branch's situation -- there's no ambiguity about
+-- accidental brushes to tolerate once the target's already been reached,
+-- so no debounce concern applies here, and the audible/haptic alert
+-- (removed from the still-counting branch above, per a separate report
+-- about accidental brushes specifically) stays for THIS branch --
+-- pilot-confirmed, 2026-09: that removal was scoped too broadly and
+-- shouldn't have touched this case.
 --
--- No audible/haptic alert (pilot request, 2026-09, THIRD field-test
--- round -- removed after adding the debounce below made it unnecessary):
--- earlier versions played a tone + vibration here since a bust used to
--- fire on the very first touch of MOM_LAUNCH, with no way to tell a real
--- relaunch from an accidental brush -- see pollRelaunchDebounce(), which
--- now filters out anything shorter than S.cfg.relaunchDebounce before
--- this function is ever called at all. A brush that short is now a
--- complete no-op (nothing busts, nothing alerts, the flight just
--- continues) -- and by the time a hold IS long enough to reach here, it's
--- confidently a deliberate relaunch, which doesn't need an alarm either.
+-- S.suppressNextAutoConfirm is still needed on this branch even though
+-- it now advances rather than un-arming to the SAME bet: the pilot is
+-- still physically mid-throw when this fires (the debounce-free rising
+-- edge, or shortly after), with no realistic pause to look at and adjust
+-- bet N+1's own target before the tail end of THIS SAME throw's release
+-- would otherwise auto-confirm it sight-unseen at whatever default
+-- advanceBet() just reset editMin/editSec to. Suppressing that one
+-- release keeps the same "land cleanly on the new bet's editing screen,
+-- a genuinely separate throw is what starts it" behavior a real landed
+-- hit already gives via pollLanding() -> advanceBet().
 local function autoBustUnresolvedFlight()
   local g = S.game
   if not g or not g.armed then return end
   if not S.flightConfirmed then return end
   local bet = currentBet()
   if bet.result ~= "pending" then return end   -- already hit/bust -- nothing to auto-resolve
-  bet.result = "bust"
 
   local liveVal = timerValue()
   if liveVal == nil or liveVal > 0 then
+    -- Still counting -- bust, restart the same target. No alert here
+    -- (pilot request, 2026-09, third field-test round): this is the
+    -- branch pollRelaunchDebounce() guards against an accidental brush,
+    -- and once a brush that short can't even reach this function, a
+    -- deliberate hold doesn't need an alarm either.
+    bet.result = "bust"
     S.flightConfirmed = false
     S.prevZoomConfirm = nil
     timerSet(bet.target_s)
@@ -770,16 +770,24 @@ local function autoBustUnresolvedFlight()
     return
   end
 
+  -- Already reached -- score as a hit and advance, same as a real landed
+  -- hit (pollLanding()'s own hit branch).
+  bet.result = "hit"
+  bet.scored_s = bet.target_s
+  g.score = (g.score or 0) + (bet.target_s or 0)
   S.flightConfirmed = false
   S.prevZoomConfirm = nil
-  timerSet(0)
-  timerReset()
-  g.armed = false
-  g.allInPending = false
-  g.editMin = math.floor((bet.target_s or 0) / 60)
-  g.editSec = (bet.target_s or 0) % 60
   S.suppressNextAutoConfirm = true
-  core.setStatus("relaunched before landing was detected - place your next bet")
+  core.setStatus("hit")
+  -- Alert restored for this branch specifically (pilot correction,
+  -- 2026-09: the earlier removal was scoped to the still-counting branch
+  -- only) -- system.playTone/playHaptic confirmed present since Ethos
+  -- 1.1.0, pcall-wrapped the same defensive way every other native call
+  -- in this file already is.
+  pcall(function() system.playTone(600, 150, 120) end)
+  pcall(function() system.playTone(600, 150) end)
+  pcall(function() system.playHaptic(300) end)
+  advanceBet()
 end
 
 -- Debounces MOM_LAUNCH itself while a bet is genuinely mid-flight (armed,
