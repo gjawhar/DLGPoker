@@ -52,55 +52,22 @@ local keyRects = {}
 -- can't leave a stale hit zone from whatever was on screen before.
 local valueRects = {}
 
--- Tap-to-edit (pilot request, 2026-09): the footer MIN/SEC keys and FS1/
--- FS2 can only count UP -- there was no touch-only way to walk a value
--- back down short of the hold-to-reset gesture, which zeros the field
--- outright rather than nudging it. Tried native form fields first
+-- Tap-to-edit (pilot request, 2026-09): tried native form fields first
 -- (form.addNumberField, then form.addTimeField) -- both forced a
 -- full-screen form takeover (form.clear() replaces the whole SETUP/LIVE
 -- screen; Ethos's Dialog class has no documented way to embed a field for
 -- an in-place overlay instead), which the pilot didn't want. Then a
--- compact text +/- row, which worked but wasn't the look the pilot
--- wanted. Landed on real drawn arrows via lcd.drawFilledTriangle
--- (confirmed present in the Ethos lcd namespace reference, signature
--- x1,y1,x2,y2,x3,y3, no color arg -- color comes from lcd.color()/
--- draw.color() beforehand, same as every other lcd.draw* call already in
--- this file) rather than a Unicode arrow glyph, so the shape doesn't
--- depend on font glyph coverage the way the suit symbols above do.
---
--- One column = an up triangle, a label ("MINUTES"/"SECONDS"), and a down
--- triangle, stacked. Same column used on both SETUP (flanking the WINDOW
--- value) and LIVE (flanking the MIN:SEC box group) -- minutes column to
--- the left of the time indicator, seconds column to the right, per the
--- pilot's explicit layout request.
-local ARROW_COL_W = 64
-local ARROW_W, ARROW_H = 40, 28
-local ARROW_GAP = 4
-local ARROW_LABEL_H = 14
-local ARROW_COL_TOTAL_H = ARROW_H + ARROW_GAP + ARROW_LABEL_H + ARROW_GAP + ARROW_H
-
-local function drawArrowStepper(t, x, y, label, upFn, downFn)
-  local cx = x + math.floor(ARROW_COL_W / 2)
-  local halfW = math.floor(ARROW_W / 2)
-
-  draw.color(t.accent)
-  lcd.drawFilledTriangle(cx, y, cx - halfW, y + ARROW_H, cx + halfW, y + ARROW_H)
-
-  lcd.font(FONT_S)
-  draw.color(t.dim)
-  local labelY = y + ARROW_H + ARROW_GAP
-  local lw = lcd.getTextSize(label)
-  draw.text(x + math.floor((ARROW_COL_W - lw) / 2), labelY, label)
-
-  local downY = labelY + ARROW_LABEL_H + ARROW_GAP
-  draw.color(t.accent)
-  lcd.drawFilledTriangle(cx - halfW, downY, cx + halfW, downY, cx, downY + ARROW_H)
-
-  if isTouchCapable() then
-    valueRects[#valueRects + 1] = { x = x, y = y, w = ARROW_COL_W, h = ARROW_H, action = upFn }
-    valueRects[#valueRects + 1] = { x = x, y = downY, w = ARROW_COL_W, h = ARROW_H, action = downFn }
-  end
-end
+-- compact text +/- row, then real drawn arrow triangles flanking each
+-- value -- both worked but neither was the interaction the pilot wanted
+-- ("the up and down triangles are way too small and I don't like that
+-- interaction"). Landed (pilot request, 2026-09) on unifying with the
+-- non-touch interaction instead of inventing a separate touch-only one:
+-- tapping the value itself is just a touch-only shortcut into the SAME
+-- rotary edit mode ENTER already provides on non-touch radios (see
+-- ROTARY_EDIT_FIELDS below) -- toggleEditField()/registerEditTap(),
+-- defined after keysFor() since they call it, do that toggle and
+-- register the tap zone. Once toggled on, scrolling adjusts the field
+-- exactly like non-touch -- no separate up/down logic needed here at all.
 
 -- Physical FS1-FS4 sit ABOVE the touchscreen on the X14 (confirmed by
 -- photo, x14_switch_mapping.png), not below it. The on-screen key row is
@@ -172,6 +139,32 @@ local function keysFor(scr)
   return {}
 end
 
+-- Tap-to-edit (pilot request, 2026-09) -- see the comment above valueRects'
+-- declaration. Defined here, after keysFor(), rather than up with the rest
+-- of the touch/rotary state, because toggleEditField() calls keysFor() --
+-- a local function defined below the point where it's called is invisible
+-- to a closure created above it (Lua resolves an out-of-scope local as a
+-- global instead of erroring), so this ordering isn't cosmetic.
+local function toggleEditField(field)
+  local scr = core.S.screen
+  local label = ROTARY_EDIT_FIELDS[field].label
+  local keys = keysFor(scr)
+  for i, lbl in ipairs(keys) do
+    if lbl == label then focus[scr] = i break end
+  end
+  -- Toggle, not just set: touch has no physical ENTER to press a second
+  -- time to leave edit mode, so tapping the same value again has to do
+  -- what a second ENTER press does on non-touch.
+  rotaryEditField = (rotaryEditField == field) and nil or field
+end
+
+local function registerEditTap(x, y, w, h, field)
+  valueRects[#valueRects + 1] = {
+    x = x, y = y, w = w, h = h,
+    action = function() toggleEditField(field) end,
+  }
+end
+
 local function paintSetup(w, h)
   local t = draw.theme()
   draw.chrome(w, "DLG Poker")
@@ -220,90 +213,62 @@ local function paintSetup(w, h)
   local windowStr = draw.mmss(core.S.setupWindow)
   local betsStr = tostring(core.S.setupBets)
 
-  if isTouchCapable() then
-    -- WINDOW gets its own centred row, flanked by big MINUTES/SECONDS
-    -- arrow columns (pilot request, 2026-09) -- minutes to the left of
-    -- the time indicator, seconds to the right. BETS gets the same
-    -- treatment below (pilot request, 2026-09: "same pattern as min and
-    -- sec") -- one column, to the right of its value, since it's a
-    -- single field rather than two.
-    lcd.font(FONT_S)
-    draw.color(t.dim2)
-    local windowLbl = "WINDOW"
-    draw.text(math.floor((w - lcd.getTextSize(windowLbl)) / 2), cy, windowLbl)
-    cy = cy + 16
+  -- True centred-pair-with-gap layout, matching the mockup's flex
+  -- centering, rather than fixed offsets from the midpoint -- each column
+  -- is sized to its own widest content (label or value) so short/long
+  -- values (e.g. "3" vs "10:00") don't throw off the pairing. Same layout
+  -- for touch and non-touch radios (pilot request, 2026-09: "the only
+  -- behavior that's different is that you can tap directly on the number
+  -- rather than scroll to min and sec at the top of the screen") -- touch
+  -- gets tap zones over WINDOW/BETS added below, nothing else changes.
+  lcd.font(FONT_S)
+  local labelWindowW, labelBetsW = lcd.getTextSize("WINDOW"), lcd.getTextSize("BETS")
+  lcd.font(FONT_XL)
+  local valWindowW, valBetsW = lcd.getTextSize(windowStr), lcd.getTextSize(betsStr)
+  local col1W = math.max(labelWindowW, valWindowW)
+  local col2W = math.max(labelBetsW, valBetsW)
+  local gap = 48
+  local col1X = math.floor((w - (col1W + gap + col2W)) / 2)
+  local col2X = col1X + col1W + gap
 
-    lcd.font(FONT_XL)
-    local valWindowW = lcd.getTextSize(windowStr)
+  lcd.font(FONT_S)
+  draw.color(t.dim2)
+  draw.text(col1X, cy, "WINDOW")
+  draw.text(col2X, cy, "BETS")
+  cy = cy + 16
+  lcd.font(FONT_XL)
+  draw.color(t.txt)
+  draw.text(col1X, cy, windowStr)
+  draw.text(col2X, cy, betsStr)
+
+  if isTouchCapable() then
+    -- Tap WINDOW or BETS to enter the same rotary edit mode ENTER gives
+    -- non-touch radios (pilot request, 2026-09). WINDOW is one combined
+    -- "M:SS" string, not two separate boxes the way LIVE's MIN/SEC
+    -- already are -- split its tap zone at the digit boundary between
+    -- the minutes part and the ":SS" remainder so "tap minutes or
+    -- seconds" works without restructuring the display.
     local _, valH = lcd.getTextSize("0")
     valH = (valH and valH > 0) and valH or 28
+    local minPartW = lcd.getTextSize(tostring(math.floor(core.S.setupWindow / 60)))
+    local secPartW = valWindowW - minPartW
 
-    local rowGap = 14
-    local totalRowW = ARROW_COL_W + rowGap + valWindowW + rowGap + ARROW_COL_W
-    local minColX = math.floor((w - totalRowW) / 2)
-    local valueX = minColX + ARROW_COL_W + rowGap
-    local secColX = valueX + valWindowW + rowGap
-
-    draw.color(t.txt)
-    draw.text(valueX, cy, windowStr)
-
-    local colY = cy + math.floor(valH / 2) - math.floor(ARROW_COL_TOTAL_H / 2)
-    drawArrowStepper(t, minColX, colY, "MINUTES", core.bumpMin, core.bumpMinDown)
-    drawArrowStepper(t, secColX, colY, "SECONDS", core.bumpSec, core.bumpSecDown)
-
-    -- Arrow columns (ARROW_COL_TOTAL_H) are taller than the value text
-    -- (valH), so their bottom edge is what determines where BETS starts.
-    cy = colY + ARROW_COL_TOTAL_H + 24
-
-    lcd.font(FONT_S)
-    draw.color(t.dim2)
-    local betsLbl = "BETS"
-    draw.text(math.floor((w - lcd.getTextSize(betsLbl)) / 2), cy, betsLbl)
-    cy = cy + 16
-
-    lcd.font(FONT_XL)
-    local valBetsW = lcd.getTextSize(betsStr)
-    local betsTotalW = valBetsW + rowGap + ARROW_COL_W
-    local betsValueX = math.floor((w - betsTotalW) / 2)
-    local betsColX = betsValueX + valBetsW + rowGap
-
-    draw.color(t.txt)
-    draw.text(betsValueX, cy, betsStr)
-
-    local betsColY = cy + math.floor(valH / 2) - math.floor(ARROW_COL_TOTAL_H / 2)
-    drawArrowStepper(t, betsColX, betsColY, "BETS",
-      function() core.bumpBets(1) end, function() core.bumpBets(-1) end)
+    local function editZone(field, x, zw)
+      if rotaryEditField == field then
+        draw.color(t.accent)
+        lcd.drawRectangle(x - 4, cy - 4, zw + 8, valH + 8, 2)
+      end
+      registerEditTap(x - 4, cy - 4, zw + 8, valH + 8, field)
+    end
+    editZone("min", col1X, minPartW)
+    editZone("sec", col1X + minPartW, secPartW)
+    editZone("bets", col2X, valBetsW)
 
     cy = h - 40
     lcd.font(FONT_S)
     draw.color(t.dim)
-    draw.text(6, cy, "CONFIG bottom right", w - 12)
+    draw.text(6, cy, "tap WINDOW or BETS, then scroll to adjust - tap CONFIG, bottom right", w - 12)
   else
-    -- True centred-pair-with-gap layout, matching the mockup's flex
-    -- centering, rather than fixed offsets from the midpoint -- each
-    -- column is sized to its own widest content (label or value) so
-    -- short/long values (e.g. "3" vs "10:00") don't throw off the
-    -- pairing.
-    lcd.font(FONT_S)
-    local labelWindowW, labelBetsW = lcd.getTextSize("WINDOW"), lcd.getTextSize("BETS")
-    lcd.font(FONT_XL)
-    local valWindowW, valBetsW = lcd.getTextSize(windowStr), lcd.getTextSize(betsStr)
-    local col1W = math.max(labelWindowW, valWindowW)
-    local col2W = math.max(labelBetsW, valBetsW)
-    local gap = 48
-    local col1X = math.floor((w - (col1W + gap + col2W)) / 2)
-    local col2X = col1X + col1W + gap
-
-    lcd.font(FONT_S)
-    draw.color(t.dim2)
-    draw.text(col1X, cy, "WINDOW")
-    draw.text(col2X, cy, "BETS")
-    cy = cy + 16
-    lcd.font(FONT_XL)
-    draw.color(t.txt)
-    draw.text(col1X, cy, windowStr)
-    draw.text(col2X, cy, betsStr)
-
     cy = h - 60
     lcd.font(FONT_S)
     draw.color(t.dim)
@@ -399,23 +364,29 @@ local function paintLive(w, h)
     draw.text(colonX, cy, ":")
     draw.text(secX, cy, secStr)
 
-    -- Touch pilots get MINUTES/SECONDS arrow columns flanking the box
-    -- group (pilot request, 2026-09) -- minutes to the left of the min
-    -- box, seconds to the right of the sec box, both vertically centred
-    -- on the box row. Everyone else keeps the original FS1/FS2 captions,
-    -- centred under their OWN digit group as before.
+    -- Touch pilots (pilot request, 2026-09) tap the boxed digit group
+    -- directly to enter the same rotary edit mode ENTER gives non-touch
+    -- radios -- the box itself (already drawn above) is the tap zone, no
+    -- separate arrow widget needed. Everyone still gets the FS1/FS2
+    -- captions underneath -- FS1/FS2 still bump the field one-shot same
+    -- as always, touch or not.
     if isTouchCapable() then
-      local rowGap = 14
-      local colY = (cy - 4) + math.floor(boxH / 2) - math.floor(ARROW_COL_TOTAL_H / 2)
-      drawArrowStepper(t, minX - rowGap - ARROW_COL_W, colY, "MINUTES", core.bumpMin, core.bumpMinDown)
-      drawArrowStepper(t, secX + secW + rowGap, colY, "SECONDS", core.bumpSec, core.bumpSecDown)
-    else
-      lcd.font(FONT_S)
-      draw.color(t.dim)
-      local capMin, capSec = "FS1 MIN", "FS2 SEC"
-      draw.text(minX + math.floor((minW - lcd.getTextSize(capMin)) / 2), cy + boxH + 6, capMin)
-      draw.text(secX + math.floor((secW - lcd.getTextSize(capSec)) / 2), cy + boxH + 6, capSec)
+      local function editZone(field, bx, bw)
+        if rotaryEditField == field then
+          draw.color(t.accent)
+          lcd.drawRectangle(bx, cy - 4, bw, boxH, 2)
+        end
+        registerEditTap(bx, cy - 4, bw, boxH, field)
+      end
+      editZone("min", minX - 8, minW + 16)
+      editZone("sec", secX - 8, secW + 16)
     end
+
+    lcd.font(FONT_S)
+    draw.color(t.dim)
+    local capMin, capSec = "FS1 MIN", "FS2 SEC"
+    draw.text(minX + math.floor((minW - lcd.getTextSize(capMin)) / 2), cy + boxH + 6, capMin)
+    draw.text(secX + math.floor((secW - lcd.getTextSize(capSec)) / 2), cy + boxH + 6, capSec)
 
     -- Spells out what used to need a CONFIRM press explaining itself
     -- (pilot request, 2026-09): now that a throw is the only thing that

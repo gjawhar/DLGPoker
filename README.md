@@ -31,8 +31,10 @@ voice announcements well.
    scroll focus to MIN or SEC and press **ENTER** to edit it directly —
    scrolling then adjusts that field up *or* down (same 1 min / 10s steps),
    and ENTER again (or EXIT) leaves the field. On touch-capable radios
-   (e.g. X20RS), tap the up/down arrows next to the time instead — also
-   bidirectional. **Then just launch (throw it)** — releasing the glider
+   (e.g. X20RS), tap the minutes or seconds value directly instead of
+   scrolling to it — the tap does what ENTER does (tap again to leave),
+   and from there the scroll wheel adjusts it up or down exactly like a
+   non-touch radio. **Then just launch (throw it)** — releasing the glider
    is what locks in whatever time was showing *and* starts your target
    Ethos timer counting down, both at once. There's no separate confirm
    press; the screen says as much ("LAUNCH to lock bet & start timer")
@@ -148,9 +150,11 @@ transmitter's internal storage — use whichever your radio is set up with.
 ## Status
 
 Field-tested on a real X14. Touch-capable radios (e.g. X20RS) are
-supported too — footer keys and the MIN/SEC up/down arrows are tappable
-directly, with a fix for a double-fire quirk some touch radios have where
-a single tap could otherwise register as two. A few known gaps are
+supported too — footer keys and the MIN/SEC/BETS values are tappable
+directly (tapping a value enters the same scroll-to-adjust mode ENTER
+gives non-touch radios), with a fix for a double-fire quirk some touch
+radios have where a single tap could otherwise register as two. A few
+known gaps are
 tracked in [`CLAUDE.md`](./CLAUDE.md#known-open-items-as-of-last-session)
 (e.g. X20RS hardware behavior for one timer API path is still
 unconfirmed, and the log screen's per-game detail view isn't built yet).

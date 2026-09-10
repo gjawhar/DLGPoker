@@ -181,16 +181,55 @@ and pressing ENTER now starts editing that field directly: `rotaryEditField`
 ROTARY scroll from moving footer focus to calling that field's up/down
 functions directly instead — looked up from `ROTARY_EDIT_FIELDS`, a small
 table mapping each field to its `{label, up, down}` (MIN/SEC use
-`core.bumpMin`/`bumpMinDown`/`bumpSec`/`bumpSecDown`, same as the touch
-arrow steppers; BETS wraps `core.bumpBets(1)`/`core.bumpBets(-1)` since
-that one already took a signed delta). Bidirectional either way, unlike
-the plain footer keys which only ever bump up (BETS's footer key still
-wraps 5→1 on overshoot, unchanged). ENTER again, or RTN/EXIT, leaves edit
-mode. `screen.paint()` self-heals it to `nil` if the focused key stops
-matching that field's label out from under it (e.g. a real throw arms
-the bet mid-edit). BETS got this same treatment on SETUP's touch layout
-too (a single arrow-stepper column to the right of its value, mirroring
-MINUTES/SECONDS) — pilot request, 2026-09: "same pattern as min and sec."
+`core.bumpMin`/`bumpMinDown`/`bumpSec`/`bumpSecDown`; BETS wraps
+`core.bumpBets(1)`/`core.bumpBets(-1)` since that one already took a
+signed delta). Bidirectional either way, unlike the plain footer keys
+which only ever bump up (BETS's footer key still wraps 5→1 on overshoot,
+unchanged). ENTER again, or RTN/EXIT, leaves edit mode. `screen.paint()`
+self-heals it to `nil` if the focused key stops matching that field's
+label out from under it (e.g. a real throw arms the bet mid-edit).
+
+**Touch radios use the exact same mechanism** (pilot request, 2026-09:
+"the touch screen version should have the same scroll wheel behavior as
+the non-touch screen... the only behavior that's different is that you
+can tap directly on the number rather than scroll to min and sec at the
+top of the screen"). Earlier touch-only designs — a full-screen native
+form field, a compact +/- text row, then drawn arrow-triangle steppers
+flanking each value — are all gone; SETUP and LIVE now render the exact
+same layout on touch and non-touch radios (no more `isTouchCapable()`
+branch for the WINDOW/BETS/MIN/SEC layout itself). The only touch
+addition is a tap zone directly over each value (registered via
+`registerEditTap()`, defined right after `keysFor()` since it calls it)
+whose action is `toggleEditField()` — that function looks up the tapped
+field's footer label in `ROTARY_EDIT_FIELDS`, sets `focus[]` to that
+footer key's index (so the footer's own "editing" highlight lights up
+exactly as it would from a non-touch ENTER press) and toggles
+`rotaryEditField`, since touch has no physical ENTER to press a second
+time to leave. WINDOW is one combined `"M:SS"` string on SETUP (not two
+boxes the way LIVE's MIN/SEC already are), so its tap zone splits at the
+digit boundary between the minutes part and the `":SS"` remainder —
+`tostring(math.floor(core.S.setupWindow / 60))`'s width — so "tap
+minutes or seconds" works without restructuring that display. Once
+`rotaryEditField` is set, ROTARY scroll behaves identically regardless of
+how it got set — no touch-specific bump logic exists anymore. A tapped
+field also gets an accent-colored border drawn directly around it while
+editing (`t.accent`, 2px `lcd.drawRectangle`) since a touch pilot's
+finger is on the value itself, not the footer, when they need the
+feedback.
+
+Verified with a full end-to-end execution test (mocked `lcd`/`system`/
+`model`/`form`/`FONT_*`/`KEY_*`, real `loadfile` require chain matching
+`main.lua`, `system.getVersion().board = "X20RS"` to force
+`isTouchCapable()` true) that grid-taps SETUP and LIVE's content area —
+deliberately excluding the footer key row and SETUP's CONFIG button,
+since a blind scan's first run tapped START mid-sweep and changed
+`core.S.screen` out from under the probe — and confirms a tap toggles
+`rotaryEditField` (value unchanged by the tap itself, changed by a
+following ROTARY scroll) for WINDOW, BETS, and LIVE's MIN/SEC boxes, plus
+re-confirms the non-touch ENTER+scroll path still works after the shared-
+layout refactor. See [[reference_lua_testing_via_lupa]] (assistant
+memory) for why this level of test — not just a syntax check — is
+mandatory for any `draw.lua`/`screen.lua` change on this project.
 
 **Deliberately does NOT use a long-press-ENTER gesture** (a `KEY_ENTER_LONG`-
 style "hold to reset" mirroring the FS-switch hold-to-reset) even though
@@ -298,8 +337,8 @@ about... let's upgrade this design."
   typeface change) rather than promising something the radio can't do.
 
 Colour changes propagate automatically everywhere `draw.theme()` is
-already read (SETUP's arrow steppers, SUMMARY's per-bet result colours,
-CONFIG's "About" text, etc.) -- only the screens getting NEW structural
+already read (SETUP/LIVE's tap-to-edit zones, SUMMARY's per-bet result
+colours, CONFIG's "About" text, etc.) -- only the screens getting NEW structural
 elements (badges, dotted dividers) needed screen.lua changes at all.
 
 ## LOG screen navigation fixes (2026-09, screen.lua only)
