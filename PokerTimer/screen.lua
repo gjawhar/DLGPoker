@@ -209,7 +209,14 @@ local function paintSetup(w, h)
     sx = sx + lcd.getTextSize(suits[i][1]) + 14
   end
 
-  cy = cy + 40
+  -- Dotted section break (pilot request, 2026-09: "the start screen can
+  -- use the visual upgrade we gave some other screens") -- LIVE already
+  -- uses this exact treatment (t.marker DOTTED rule) under its own header
+  -- row; SETUP had nothing separating the branding (title/suits) from the
+  -- actual game-setup controls below it.
+  cy = cy + 20
+  draw.dottedLine(6, cy, w - 12, t.marker)
+  cy = cy + 24
   local windowStr = draw.mmss(core.S.setupWindow)
   local betsStr = tostring(core.S.setupBets)
 
@@ -236,7 +243,20 @@ local function paintSetup(w, h)
   draw.text(col1X, cy, "WINDOW")
   draw.text(col2X, cy, "BETS")
   cy = cy + 16
+
+  -- Boxed, tinted background behind each value -- same treatment LIVE's
+  -- MIN/SEC digit groups already get (pilot request, 2026-09, same "visual
+  -- upgrade" ask). Drawn for touch and non-touch alike -- this is a look-
+  -- and-feel change, not a touch affordance; only the accent EDIT border
+  -- drawn on top of it below is touch-only.
   lcd.font(FONT_XL)
+  local _, valH = lcd.getTextSize("0")
+  valH = (valH and valH > 0) and valH or 28
+  local boxH = valH + 8
+  draw.color(t.alt)
+  lcd.drawFilledRectangle(col1X - 8, cy - 4, col1W + 16, boxH)
+  lcd.drawFilledRectangle(col2X - 8, cy - 4, col2W + 16, boxH)
+
   draw.color(t.txt)
   draw.text(col1X, cy, windowStr)
   draw.text(col2X, cy, betsStr)
@@ -248,21 +268,22 @@ local function paintSetup(w, h)
     -- already are -- split its tap zone at the digit boundary between
     -- the minutes part and the ":SS" remainder so "tap minutes or
     -- seconds" works without restructuring the display.
-    local _, valH = lcd.getTextSize("0")
-    valH = (valH and valH > 0) and valH or 28
     local minPartW = lcd.getTextSize(tostring(math.floor(core.S.setupWindow / 60)))
     local secPartW = valWindowW - minPartW
 
     local function editZone(field, x, zw)
       if rotaryEditField == field then
         draw.color(t.accent)
-        lcd.drawRectangle(x - 4, cy - 4, zw + 8, valH + 8, 2)
+        lcd.drawRectangle(x - 4, cy - 4, zw + 8, boxH, 2)
       end
-      registerEditTap(x - 4, cy - 4, zw + 8, valH + 8, field)
+      registerEditTap(x - 4, cy - 4, zw + 8, boxH, field)
     end
     editZone("min", col1X, minPartW)
     editZone("sec", col1X + minPartW, secPartW)
-    editZone("bets", col2X, valBetsW)
+    -- BETS gets the FULL box width (col2W, not just valBetsW) since it has
+    -- no split -- "BETS" the label is usually wider than a 1-digit value,
+    -- so this avoids leaving a dead, unresponsive strip inside its own box.
+    editZone("bets", col2X, col2W)
 
     cy = h - 40
     lcd.font(FONT_S)
@@ -333,9 +354,14 @@ local function paintLive(w, h)
     if g.idx > 1 and g.bets[g.idx - 1].result == "hit" then
       lcd.font(FONT_S)
       local hitMsg = string.format("BET %d: HIT +%ds credited", g.idx - 1, g.bets[g.idx - 1].scored_s or 0)
-      local hitBw = draw.badgeSize(hitMsg)
+      -- Gap sized from the badge's OWN measured height, not a guessed
+      -- constant (pilot report, 2026-09, real hardware photo: the fixed
+      -- 26px gap this used to use was too tight against FONT_S's real
+      -- line height on real hardware, so the badge visibly overlapped the
+      -- MIN:SEC boxes drawn right below it).
+      local hitBw, hitBh = draw.badgeSize(hitMsg)
       draw.badge(math.floor((w - hitBw) / 2), cy, hitMsg, t.good, t.goodBg)
-      cy = cy + 26
+      cy = cy + hitBh + 12
     end
 
     lcd.font(FONT_XL)
@@ -816,10 +842,19 @@ local function activate(scr, i)
   local label = keys[i]
   if not label or label == "-" then return end
 
+  -- MIN/SEC/BETS below toggle rotary edit mode rather than bumping once --
+  -- on non-touch these labels are never reached here at all (screen.event()'s
+  -- ENTER handler intercepts them via ROTARY_EDIT_FIELDS before activate()
+  -- is ever called), so this branch only ever runs from a touch tap on the
+  -- FOOTER key itself. It used to just bump the field once, inconsistent
+  -- with tapping the value/box directly (which already toggled edit mode)
+  -- -- pilot report, 2026-09: "clicking on MIN should highlight the min box
+  -- and allow me to adjust it using the scroll -- it does neither." Footer
+  -- key and value are now just two tap targets for the identical action.
   if scr == SCREEN.SETUP then
-    if label == "MIN" then core.bumpMin()
-    elseif label == "SEC" then core.bumpSec()
-    elseif label == "BETS" then core.bumpBets(1)
+    if label == "MIN" then toggleEditField("min")
+    elseif label == "SEC" then toggleEditField("sec")
+    elseif label == "BETS" then toggleEditField("bets")
     elseif label == "START" then core.startGame()
     elseif label == "CONFIG" then
       inForm = true
@@ -827,8 +862,8 @@ local function activate(scr, i)
       config.build()
     end
   elseif scr == SCREEN.LIVE then
-    if label == "MIN" then core.bumpMin()
-    elseif label == "SEC" then core.bumpSec()
+    if label == "MIN" then toggleEditField("min")
+    elseif label == "SEC" then toggleEditField("sec")
     elseif label == "ALL IN" then core.allIn()
     elseif label == "CANCEL" then core.cancelArm()
     elseif label == "NEXT BET" then core.nextBet() end
