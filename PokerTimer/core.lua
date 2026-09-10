@@ -716,20 +716,38 @@ local function alertUnresolvedRelaunch()
   pcall(function() system.playHaptic(300) end)
 end
 
--- Un-arms back to the editing screen rather than auto-restarting a
--- countdown (pilot request, 2026-09, revised from the first version of
--- this fix): the alert's whole point is "stop and look at the screen" --
--- if the very next thing that happens is the timer silently restarting
--- anyway, the pilot never actually had to look. So this puts them back
--- at the SAME screen a brand new bet starts from, pre-filled with the
--- interrupted bet's own target (so re-throwing immediately reproduces
--- the same bet, or they can adjust it first) -- a deliberate, separate
--- throw is what actually arms+starts again, same as any other bet.
--- S.suppressNextAutoConfirm exists specifically so THAT deliberate throw
--- has to be a genuinely separate press: without it, the release half of
--- THIS SAME throw (the one that triggered the alert) would immediately
--- fall into handleLaunchFall's auto-confirm branch below and re-arm
--- right back, defeating the point just as much as not un-arming at all.
+-- Two different responses depending on whether the target had already
+-- been reached at the moment of the relaunch (pilot report, 2026-09, real
+-- hardware: relaunched well before the target with the timer still
+-- actively counting, and expected the old bet to bust and the SAME
+-- target to immediately start counting down again -- not the "go back to
+-- an editable screen, throw a THIRD time" flow this used to apply
+-- unconditionally. Those two situations turned out to want different
+-- handling, not one rule for both):
+--
+-- STILL COUNTING (liveVal > 0): almost certainly either a genuine new
+-- attempt at the same bet or an accidental mid-flight switch bump -- both
+-- want the SAME outcome, so just restart the SAME target immediately, no
+-- extra throw required. Mechanically this is identical to the ground
+-- re-grip path handleLaunchRise() already has for `not S.flightConfirmed`
+-- -- clearing S.flightConfirmed here (armed stays true) is what lets that
+-- same "reset timer, wait for the release to actually start a fresh
+-- attempt" logic run for a CONFIRMED flight too, rather than only for a
+-- pre-confirmation ground re-grip.
+--
+-- ALREADY REACHED (liveVal <= 0), no brakes: the ORIGINAL report this
+-- mechanism was built for (pilot request, 2026-09: "you should be on a
+-- bet screen at that point... place the bet and launch from there").
+-- Un-arms back to the editing screen instead of auto-restarting -- the
+-- alert's whole point there is "stop and look at the screen," which a
+-- silent auto-restart would defeat. Pre-fills the interrupted bet's own
+-- target so re-throwing immediately reproduces the same bet, or it can be
+-- adjusted first; a deliberate, separate throw is what actually arms+
+-- starts again. S.suppressNextAutoConfirm exists specifically so THAT
+-- deliberate throw has to be a genuinely separate press: without it, the
+-- release half of THIS SAME throw would immediately fall into
+-- handleLaunchFall's auto-confirm branch below and re-arm right back,
+-- defeating the point just as much as not un-arming at all.
 local function autoBustUnresolvedFlight()
   local g = S.game
   if not g or not g.armed then return end
@@ -737,6 +755,17 @@ local function autoBustUnresolvedFlight()
   local bet = currentBet()
   if bet.result ~= "pending" then return end   -- already hit/bust -- nothing to auto-resolve
   bet.result = "bust"
+
+  local liveVal = timerValue()
+  if liveVal == nil or liveVal > 0 then
+    S.flightConfirmed = false
+    S.prevZoomConfirm = nil
+    timerSet(bet.target_s)
+    timerReset()
+    alertUnresolvedRelaunch()
+    return
+  end
+
   S.flightConfirmed = false
   S.prevZoomConfirm = nil
   timerSet(0)

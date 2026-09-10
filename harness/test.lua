@@ -375,6 +375,10 @@ setSrc("LANDING_MODE", -100); core.wakeup()
 -- straight through the "landing" and the next throw, silently -- see
 -- autoBustUnresolvedFlight() in core.lua.)
 
+core.S.game.deadline = os.time() + 600   -- explicit, generous window --
+                                           -- decouples this test from
+                                           -- cumulative elapsed time in
+                                           -- every earlier test
 core.S.game.bets[2] = { idx = 2, target_s = 60, result = "pending", attempts = 0, scored_s = 0, allIn = false }
 core.S.game.armed = true
 core.S.flightConfirmed = false
@@ -392,7 +396,15 @@ check("confirmed after first release+exit", core.S.flightConfirmed == true)
 -- the pilot never actually had to look. So this throw's OWN release must
 -- land cleanly on the editing screen, not auto-arm back into a fresh
 -- attempt; only a genuinely separate, subsequent throw does that.
-tick(5)   -- flies around a while, lands long without ever braking
+--
+-- Further revised (2026-09, second field report): that whole "go back to
+-- the editing screen, throw a THIRD time" flow turned out to only be
+-- right for THIS case -- the target already reached, no brakes. Tick
+-- PAST the 60s target here specifically so this test still exercises
+-- that case; see Test 13b right below for the "still counting" case,
+-- which now behaves differently on purpose.
+tick(65)   -- flies around a while, lands long without ever braking --
+            -- well past the 60s target
 local toneCallsBefore, hapticCallsBefore = alertCalls.tone, alertCalls.haptic
 setSrc("MOM_LAUNCH", 100); core.wakeup()     -- re-grip: going through the throw sequence again
 check("stranded attempt auto-busted on re-grip", core.S.game.bets[2].result == "bust",
@@ -422,6 +434,46 @@ check("separate throw is pending again, not stuck on bust", core.S.game.bets[2].
   tostring(core.S.game.bets[2].result))
 check("separate throw target unchanged (same bet, re-do the same time)", core.S.game.bets[2].target_s == 60,
   tostring(core.S.game.bets[2].target_s))
+
+-- ---- Test 13b: relaunching while the timer is STILL COUNTING (target
+-- not yet reached) is a different situation from the above -- pilot
+-- field report, 2026-09: "I would expect that going through the sequence
+-- again would bust the old bet and restart the timer set to the old bet
+-- value," not "go back to an editable screen and require a third throw."
+-- Distinguished by autoBustUnresolvedFlight() checking the LIVE timer
+-- value at the moment of the relaunch.
+core.S.game.deadline = os.time() + 600
+core.S.game.idx = 2
+core.S.game.bets[2] = { idx = 2, target_s = 60, result = "pending", attempts = 0, scored_s = 0, allIn = false }
+core.S.game.armed = true
+core.S.flightConfirmed = false
+core.S.prevZoomConfirm = nil
+setSrc("ZOOM_MODE", -100)
+setSrc("MOM_LAUNCH", 100); core.wakeup()
+setSrc("ZOOM_MODE", 100)
+setSrc("MOM_LAUNCH", -100); core.wakeup()   -- release 1, attempt 1, 60s target
+setSrc("ZOOM_MODE", -100); core.wakeup()     -- confirms flight
+check("(13b) confirmed after first release+exit", core.S.flightConfirmed == true)
+
+tick(5)   -- well short of the 60s target -- a genuine mid-flight relaunch,
+           -- not an overshoot
+local toneCallsBefore2, hapticCallsBefore2 = alertCalls.tone, alertCalls.haptic
+setSrc("MOM_LAUNCH", 100); core.wakeup()     -- relaunch before any landing signal
+check("(13b) old attempt auto-busted", core.S.game.bets[2].result == "bust",
+  tostring(core.S.game.bets[2].result))
+check("(13b) auto-bust plays an audible alert", alertCalls.tone > toneCallsBefore2)
+check("(13b) auto-bust plays a haptic alert", alertCalls.haptic > hapticCallsBefore2)
+check("(13b) stays ARMED -- no third throw required", core.S.game.armed == true,
+  "armed=" .. tostring(core.S.game.armed))
+check("(13b) timer reset back to the full target", core.liveTimerValue() == 60,
+  "liveTimerValue=" .. tostring(core.liveTimerValue()))
+
+setSrc("MOM_LAUNCH", -100); core.wakeup()    -- release: the SAME throw finishes arming
+check("(13b) same-throw release DOES count as the new attempt (no third throw needed)",
+  core.S.game.bets[2].attempts == 2, "attempts=" .. tostring(core.S.game.bets[2].attempts))
+check("(13b) result back to pending, not stuck on bust", core.S.game.bets[2].result == "pending",
+  tostring(core.S.game.bets[2].result))
+check("(13b) target unchanged (same bet, restarted)", core.S.game.bets[2].target_s == 60)
 
 -- ---- Test 14: liveTimerValue() -- the new public accessor screen.lua
 -- needs to actually show a live countdown instead of a frozen number

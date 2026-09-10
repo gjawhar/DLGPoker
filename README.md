@@ -51,19 +51,26 @@ voice announcements well.
      extra button press needed. The Bust screen shows **"Attempt N on
      this bet"** — that count is per-bet, not a running total for the
      game: it resets to 0 the moment you move on to the next bet.
-   - Landed without braking (e.g. overshot on a downwind leg and just ran
-     it in), or the launch switch gets touched again before a landing was
-     ever detected at all — even by accident, e.g. mid-flight after
-     already reaching the target? DLG Poker can't tell "genuinely landed
-     and relaunching" from "still flying, switch bumped by accident" from
-     the switch signal alone, so either way it busts the stranded attempt,
-     gives an audible tone and a vibration, and drops you back on the
-     editing screen — the same screen a brand new bet starts from,
-     pre-filled with the interrupted bet's own time. That throw itself
-     does **not** restart anything by itself; a separate, deliberate
-     launch from that screen is what actually arms and starts again
-     (same as step 3 above) — the alert is meant to make you look at the
-     screen, not to auto-continue past it.
+   - The launch switch gets touched again before a landing was ever
+     detected at all — even by accident, e.g. mid-flight — without ever
+     braking first? DLG Poker can't tell "genuinely landed and
+     relaunching" from "still flying, switch bumped by accident" from the
+     switch signal alone, so either way it busts the stranded attempt and
+     gives an audible tone and a vibration. What happens next depends on
+     whether the timer had already reached zero at that moment:
+     - **Still counting** (well before the target) → the bust is
+       immediate and so is the retry: the SAME target starts counting
+       down again right away, no extra button press needed — same feel
+       as a normal Bust-and-Retry above, just triggered by a relaunch
+       instead of a real landing.
+     - **Already at/past the target** (e.g. overshot on a downwind leg
+       and just ran it in without braking) → drops you back on the
+       editing screen instead — the same screen a brand new bet starts
+       from, pre-filled with the interrupted bet's own time. That throw
+       itself does **not** restart anything by itself here; a separate,
+       deliberate launch from that screen is what actually arms and
+       starts again (same as step 3 above) — the alert is meant to make
+       you look at the screen at that point, not auto-continue past it.
 6. **ALL IN** claims whatever time is left in the game window as your
    bet — computed at the moment you actually launch, not when you press
    the button. Unlike a normal bet, ALL IN still needs its own button
