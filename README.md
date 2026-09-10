@@ -160,16 +160,17 @@ transmitter's internal storage — use whichever your radio is set up with.
 
 ## Status
 
-Field-tested on a real X14. Touch-capable radios (e.g. X20RS) are
-supported too — footer keys and the MIN/SEC/BETS values are tappable
-directly (tapping a value enters the same scroll-to-adjust mode ENTER
-gives non-touch radios), with a fix for a double-fire quirk some touch
-radios have where a single tap could otherwise register as two. A few
-known gaps are
-tracked in [`CLAUDE.md`](./CLAUDE.md#known-open-items-as-of-last-session)
-(e.g. X20RS hardware behavior for one timer API path is still
-unconfirmed, and the log screen's per-game detail view isn't built yet).
-Version `0.2` — actively evolving, not a finished 1.0.
+Field-tested on real X14 and X20RS transmitters, across multiple rounds
+of pilot feedback on the actual gameplay flow (launch/landing detection,
+scoring edge cases, touch interaction). Touch-capable radios (e.g. X20RS)
+are fully supported — footer keys and the MIN/SEC/BETS values are
+tappable directly (tapping a value enters the same scroll-to-adjust mode
+ENTER gives non-touch radios), with a fix for a double-fire quirk some
+touch radios have where a single tap could otherwise register as two. A
+few known gaps are tracked in
+[`CLAUDE.md`](./CLAUDE.md#known-open-items-as-of-last-session) (e.g.
+X20RS hardware behavior for one timer API path is still unconfirmed, and
+the log screen's per-game detail view isn't built yet). Version `1.0`.
 
 ## Development
 
