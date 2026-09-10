@@ -583,7 +583,20 @@ local function paintSummary(w, h)
   local title = "GAME COMPLETE"
   draw.text(math.floor((w - lcd.getTextSize(title)) / 2), CONTENT_TOP + 8, title)
 
-  local cy = CONTENT_TOP + 32
+  -- Brought up to the same divider language as LIVE and LOG (pilot
+  -- report, 2026-09: this screen was skipped entirely in the ThrowTrainer
+  -- look-and-feel pass -- no dividers at all, the one screen that never
+  -- got it). Rows stay plain colored text rather than full badges,
+  -- deliberately -- up to 5 bets (config.lua clamps Bets per game to
+  -- 1-5) have to fit in the ~180px between the header and the score, and
+  -- a badge's extra chrome per row, multiplied by 5, risks pushing TOTAL
+  -- SCORE off the bottom of a 272px-tall screen. Row height (20px) is
+  -- unchanged from before this pass for exactly that reason -- only the
+  -- two dividers are new vertical cost, and that's a one-time ~22px, not
+  -- 5x-multiplied.
+  draw.dottedLine(10, CONTENT_TOP + 28, w - 20, t.marker)
+
+  local cy = CONTENT_TOP + 38
   lcd.font(FONT_S)
   for i = 1, g.betCount do
     local b = g.bets[i]
@@ -599,7 +612,10 @@ local function paintSummary(w, h)
     cy = cy + 20
   end
 
-  cy = cy + 14
+  cy = cy + 8
+  draw.dottedLine(10, cy, w - 20, t.marker)
+  cy = cy + 16
+
   draw.color(t.dim2)
   local lbl = "TOTAL SCORE"
   draw.text(math.floor((w - lcd.getTextSize(lbl)) / 2), cy, lbl)
