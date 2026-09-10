@@ -13,6 +13,10 @@
 -- saturated colours vs. ThrowTrainer's softer, muted set). The *Bg
 -- variants are new -- DLG Poker had no tinted-background concept before
 -- this -- and exist specifically to back draw.badge() below.
+
+local core = ...
+local draw = {}
+
 local THEMES = {
   day = {
     bg = 0xF6F6F8, alt = 0xF2F2F2, txt = 0x141416, dim2 = 0x5A5A5A, dim = 0x6E6E74,
