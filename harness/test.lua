@@ -406,13 +406,23 @@ check("confirmed after first release+exit", core.S.flightConfirmed == true)
 tick(65)   -- flies around a while, lands long without ever braking --
             -- well past the 60s target
 local toneCallsBefore, hapticCallsBefore = alertCalls.tone, alertCalls.haptic
-setSrc("MOM_LAUNCH", 100); core.wakeup()     -- re-grip: going through the throw sequence again
+-- Re-grip: going through the throw sequence again. Held via pump(), not a
+-- single core.wakeup(), since MOM_LAUNCH now has to be debounced
+-- (relaunchDebounce, default 1/3s = 14 calls at the 40/s test rate) --
+-- pilot request, 2026-09, third field-test round: a brief brush must not
+-- bust anything at all. pump(0.4) = 16 calls, comfortably past 14.
+setSrc("MOM_LAUNCH", 100)
+pump(0.4)
 check("stranded attempt auto-busted on re-grip", core.S.game.bets[2].result == "bust",
   tostring(core.S.game.bets[2].result))
 check("confirmation cleared by the auto-bust", core.S.flightConfirmed == false)
-check("auto-bust plays an audible alert", alertCalls.tone > toneCallsBefore,
+-- No alert anymore (pilot request, 2026-09, third field-test round,
+-- same as the debounce above): removed once the debounce made a real
+-- relaunch reliably distinguishable from a brush -- a deliberate hold
+-- doesn't need an alarm either.
+check("auto-bust plays NO audible alert anymore", alertCalls.tone == toneCallsBefore,
   "tone calls=" .. tostring(alertCalls.tone))
-check("auto-bust plays a haptic alert", alertCalls.haptic > hapticCallsBefore,
+check("auto-bust plays NO haptic alert anymore", alertCalls.haptic == hapticCallsBefore,
   "haptic calls=" .. tostring(alertCalls.haptic))
 check("un-armed back to the editing screen, not counting down", core.S.game.armed == false)
 check("edit fields pre-filled from the interrupted bet's own target",
@@ -458,15 +468,22 @@ check("(13b) confirmed after first release+exit", core.S.flightConfirmed == true
 tick(5)   -- well short of the 60s target -- a genuine mid-flight relaunch,
            -- not an overshoot
 local toneCallsBefore2, hapticCallsBefore2 = alertCalls.tone, alertCalls.haptic
-setSrc("MOM_LAUNCH", 100); core.wakeup()     -- relaunch before any landing signal
+-- Held via pump(), same debounce reasoning as Test 13 above.
+setSrc("MOM_LAUNCH", 100)
+pump(0.4)
 check("(13b) old attempt auto-busted", core.S.game.bets[2].result == "bust",
   tostring(core.S.game.bets[2].result))
-check("(13b) auto-bust plays an audible alert", alertCalls.tone > toneCallsBefore2)
-check("(13b) auto-bust plays a haptic alert", alertCalls.haptic > hapticCallsBefore2)
+check("(13b) auto-bust plays NO audible alert anymore", alertCalls.tone == toneCallsBefore2)
+check("(13b) auto-bust plays NO haptic alert anymore", alertCalls.haptic == hapticCallsBefore2)
 check("(13b) stays ARMED -- no third throw required", core.S.game.armed == true,
   "armed=" .. tostring(core.S.game.armed))
-check("(13b) timer reset back to the full target", core.liveTimerValue() == 60,
-  "liveTimerValue=" .. tostring(core.liveTimerValue()))
+-- Tolerance, not exact-60 (same reasoning as the "timer silenced" checks
+-- elsewhere in this file): the mock timer keeps counting down in real
+-- time even after the reset, and pump() continues a few more calls past
+-- the exact call where the debounce threshold was crossed.
+local liveAfterBust = core.liveTimerValue()
+check("(13b) timer reset back to the full target", liveAfterBust ~= nil and math.abs(liveAfterBust - 60) < 1,
+  "liveTimerValue=" .. tostring(liveAfterBust))
 
 setSrc("MOM_LAUNCH", -100); core.wakeup()    -- release: the SAME throw finishes arming
 check("(13b) same-throw release DOES count as the new attempt (no third throw needed)",
@@ -474,6 +491,42 @@ check("(13b) same-throw release DOES count as the new attempt (no third throw ne
 check("(13b) result back to pending, not stuck on bust", core.S.game.bets[2].result == "pending",
   tostring(core.S.game.bets[2].result))
 check("(13b) target unchanged (same bet, restarted)", core.S.game.bets[2].target_s == 60)
+
+-- ---- Test 13c: a brush of MOM_LAUNCH shorter than relaunchDebounce
+-- (default 1/3s) while genuinely mid-flight must be a COMPLETE no-op --
+-- pilot request, 2026-09, third field-test round: "the user could brush
+-- up against the launch button but won't hold it for say, more than a
+-- third of a second... just let them continue the flight." Not just "no
+-- alert" (Tests 13/13b already cover that generally) -- nothing at all
+-- should change: not the bet's result, not the timer, not
+-- flightConfirmed, not the attempt count.
+core.S.game.deadline = os.time() + 600
+core.S.game.idx = 2
+core.S.game.bets[2] = { idx = 2, target_s = 60, result = "pending", attempts = 0, scored_s = 0, allIn = false }
+core.S.game.armed = true
+core.S.flightConfirmed = false
+core.S.prevZoomConfirm = nil
+setSrc("ZOOM_MODE", -100)
+setSrc("MOM_LAUNCH", 100); core.wakeup()
+setSrc("ZOOM_MODE", 100)
+setSrc("MOM_LAUNCH", -100); core.wakeup()   -- release 1, attempt 1, 60s target
+setSrc("ZOOM_MODE", -100); core.wakeup()     -- confirms flight
+check("(13c) confirmed after first release+exit", core.S.flightConfirmed == true)
+
+tick(5)   -- well short of the 60s target
+local toneCallsBefore3, hapticCallsBefore3 = alertCalls.tone, alertCalls.haptic
+-- pump(0.1) = 4 calls at the 40/s test rate -- well under the 14 calls
+-- (1/3s) relaunchDebounce needs, simulating a quick accidental brush.
+setSrc("MOM_LAUNCH", 100)
+pump(0.1)
+setSrc("MOM_LAUNCH", -100); core.wakeup()   -- brush ends
+check("(13c) bet result untouched by the brush", core.S.game.bets[2].result == "pending",
+  tostring(core.S.game.bets[2].result))
+check("(13c) still flight-confirmed -- never cleared", core.S.flightConfirmed == true)
+check("(13c) attempts unchanged (no phantom attempt logged)", core.S.game.bets[2].attempts == 1,
+  "attempts=" .. tostring(core.S.game.bets[2].attempts))
+check("(13c) no audible alert", alertCalls.tone == toneCallsBefore3)
+check("(13c) no haptic alert", alertCalls.haptic == hapticCallsBefore3)
 
 -- ---- Test 14: liveTimerValue() -- the new public accessor screen.lua
 -- needs to actually show a live countdown instead of a frozen number

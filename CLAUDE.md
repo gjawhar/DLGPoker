@@ -132,7 +132,7 @@ directly by the DLG-for-Ethos template's actual flight-mode logic:
    Once confirmed, the timer is **locked**: further presses/releases do
    nothing *while the flight is still genuinely in progress* — see step 3a.
 3a. **Landed without braking, or the switch touched again before any
-   landing at all** (pilot field-test reports, 2026-09, two rounds): if
+   landing at all** (pilot field-test reports, 2026-09, four rounds): if
    `LANDING_MODE` never fires (overshoots downwind and runs it in), OR the
    pilot's hand brushes `MOM_LAUNCH` while genuinely still airborne (there
    is no way to tell these apart from the switch signal alone), the bet
@@ -140,62 +140,69 @@ directly by the DLG-for-Ethos template's actual flight-mode logic:
    BOTH steps 1 and 2 permanent no-ops for it — a second throw sequence
    did nothing at all, so the physical timer (never stopped or reset)
    just silently kept counting straight through. Fixed via
-   `autoBustUnresolvedFlight()`, called at the top of both
-   `handleLaunchRise()` and `handleLaunchFall()`: if the bet is armed,
-   confirmed, and still unresolved (`result == "pending"`) when a NEW
-   throw sequence begins, that's auto-busted (not scored as a hit) and
-   plays an audible tone + haptic (`system.playTone`/`playHaptic`,
-   confirmed present since Ethos 1.1.0) since this is otherwise a
-   completely silent correction the pilot has no other way to notice.
-   **Revised 2026-09 (second field-test round) to NOT auto-restart the
-   countdown** — but **revised again 2026-09 (third field-test round) to
-   split on whether the target had already been reached**, since those
-   two rounds of feedback turned out to describe two different
-   situations, not one rule that covers both:
-   - The **first** revision (second round) removed the original
-     immediate-restart, because re-arming on the SAME throw's release
-     defeated the alert's whole point ("stop and look at the screen")
-     since nothing actually made the pilot look. That report was
-     specifically about landing **without braking after the target was
-     already reached** — a real, if unbraked, landing.
-   - The **third** round reported relaunching **while the timer was still
-     actively counting**, well before the target — and expected the OLD
-     bet to bust and the SAME target to restart immediately on that same
-     throw, no third throw required. A relaunch that far from the target
-     is much more likely to be a genuine new attempt (or an accidental
-     mid-flight switch bump) than "stop and reconsider," so it gets the
-     opposite treatment from the target-reached case.
+   `autoBustUnresolvedFlight()`: if the bet is armed, confirmed, and
+   still unresolved (`result == "pending"`) when a new throw sequence
+   begins, that's auto-busted (not scored as a hit).
+   - **Second round**: revised to NOT auto-restart the countdown — the
+     first version re-armed and restarted immediately on the SAME throw's
+     release, which defeated the (then-existing) alert's whole point
+     ("stop and look at the screen"). That report was specifically about
+     landing **without braking after the target was already reached**.
+   - **Third round**: reported relaunching **while the timer was still
+     actively counting**, well before the target — expected the OLD bet
+     to bust and the SAME target to restart immediately, no third throw
+     required. `autoBustUnresolvedFlight()` now reads the live timer
+     value (`timerValue()`) to pick between the two:
+     - **Still counting** (`liveVal > 0`, or unreadable): busts the old
+       attempt, clears `S.flightConfirmed`, and immediately calls
+       `timerSet(bet.target_s)` + `timerReset()` — `g.armed` stays `true`
+       throughout. Reuses the SAME mechanism the ground re-grip case
+       (step 1) already had for `not S.flightConfirmed` — clearing the
+       flag here is what lets that "reset now, let the release actually
+       start a fresh attempt" logic run for a CONFIRMED flight too.
+       `handleLaunchFall()`'s own attempts-increment/`result = "pending"`
+       logic (unchanged) is what turns the SAME throw's release into the
+       actual new attempt.
+     - **Already reached** (`liveVal <= 0`): unchanged from the second
+       round — sets `g.armed = false`, pre-fills `g.editMin`/`g.editSec`
+       from the interrupted bet's own `target_s`, and sets
+       `S.suppressNextAutoConfirm = true` so the release half of THIS
+       SAME throw doesn't immediately fall into step 0's auto-confirm and
+       re-arm right back.
+   - **Fourth round**: "the user could brush up against the launch button
+     but won't hold it for say, more than a third of a second... just let
+     them continue the flight" — plus "remove the vibration and audio
+     alert even if they relaunch intentionally." Two changes:
+     - **`pollRelaunchDebounce()`**, a new function polled every
+       `core.wakeup()` (alongside `pollZoomConfirm()`/`pollLanding()`),
+       now GATES `autoBustUnresolvedFlight()` entirely —
+       `handleLaunchRise()`/`handleLaunchFall()` no longer call it
+       directly at all. Same level-based call-counting pattern
+       `pollLanding()` already uses for `LANDING_MODE` (`S.relaunchCalls`,
+       `S.cfg.relaunchDebounce` default `1/3` second) — while armed,
+       confirmed, and `result == "pending"`, it watches `MOM_LAUNCH`'s
+       raw level every wakeup(); released before the threshold resets the
+       counter to 0 and NOTHING happens (no bust, no timer change); held
+       past it fires `autoBustUnresolvedFlight()` immediately, mid-hold.
+       The existing rise/fall handlers didn't need restructuring beyond
+       removing that one call each — both already no-op while
+       `S.flightConfirmed` is true, which is exactly the state this new
+       poller now owns exclusively; the poller's own bust clears that
+       flag, letting the (unchanged) fall-through logic in each handler
+       pick up correctly whichever way it resolved.
+     - **`alertUnresolvedRelaunch()` (the `system.playTone`/`playHaptic`
+       calls) was deleted outright**, not just silenced conditionally —
+       once a real relaunch is reliably distinguishable from a brush by
+       the debounce above, neither case needs an alarm: a brush is now a
+       complete no-op, and a deliberate hold doesn't need one either.
 
-   `autoBustUnresolvedFlight()` now reads the live timer value
-   (`timerValue()`) at the moment of the bust to decide which applies:
-   - **Still counting** (`liveVal > 0`, or unreadable): busts the old
-     attempt, clears `S.flightConfirmed`, and immediately calls
-     `timerSet(bet.target_s)` + `timerReset()` — `g.armed` is left
-     `true` throughout. This reuses the SAME mechanism the ground re-grip
-     case (step 1) already had for `not S.flightConfirmed` — clearing the
-     flag here is what lets that "reset now, let the release actually
-     start a fresh attempt" logic run for a CONFIRMED flight too, not
-     just a pre-confirmation ground re-grip. `handleLaunchFall()`'s own
-     attempts-increment/`result = "pending"` logic (unchanged) is what
-     turns the SAME throw's release into the actual new attempt — no
-     `S.suppressNextAutoConfirm` needed here since re-arming immediately
-     is now the intended outcome, not the bug being avoided.
-   - **Already reached** (`liveVal <= 0`): unchanged from the second
-     revision above — sets `g.armed = false`, pre-fills
-     `g.editMin`/`g.editSec` from the interrupted bet's own `target_s`,
-     and sets `S.suppressNextAutoConfirm = true` so the release half of
-     THIS SAME throw doesn't immediately fall into step 0's auto-confirm
-     and re-arm right back. A genuinely separate, subsequent throw is
-     what actually arms+starts again.
-
-   Either branch plays the same audible tone + haptic alert — there's
-   still no way to tell "genuinely landed and relaunching" from "still
-   flying, switch bumped by accident" from the switch signal alone, so
-   both cases surface loudly. A real landing (brakes) is completely
-   unaffected by any of this — it still resolves the attempt the normal
-   way, via step 5, and stays armed for an immediate retry as it always
-   has. Covered by harness Tests 13 (target-reached case, tick(65) past a
-   60s target) and 13b (still-counting case, tick(5) short of it).
+   A real landing (brakes) is completely unaffected by any of this — it
+   still resolves the attempt the normal way, via step 5, and stays armed
+   for an immediate retry as it always has. Covered by harness Tests 13
+   (target-reached case, held via `pump(0.4)` to cross the debounce),
+   13b (still-counting case, same), and 13c (a brush shorter than the
+   debounce — asserts NOTHING changes: not the result, not
+   `flightConfirmed`, not the attempt count, no alert).
 4. **Exception**: once the timer counts down to zero (target reached), the
    confirmation requirement is waived — that much real elapsed time already
    rules out ground-fumbling regardless of whether the elevator gesture

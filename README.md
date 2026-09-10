@@ -51,13 +51,19 @@ voice announcements well.
      extra button press needed. The Bust screen shows **"Attempt N on
      this bet"** — that count is per-bet, not a running total for the
      game: it resets to 0 the moment you move on to the next bet.
-   - The launch switch gets touched again before a landing was ever
-     detected at all — even by accident, e.g. mid-flight — without ever
-     braking first? DLG Poker can't tell "genuinely landed and
-     relaunching" from "still flying, switch bumped by accident" from the
-     switch signal alone, so either way it busts the stranded attempt and
-     gives an audible tone and a vibration. What happens next depends on
-     whether the timer had already reached zero at that moment:
+   - The launch switch gets held again before a landing was ever detected
+     at all — without ever braking first? DLG Poker can't tell "genuinely
+     landed and relaunching" from "still flying, switch touched on
+     purpose" from the switch signal alone, so it busts the stranded
+     attempt either way — but only once the switch has been held for
+     **more than about a third of a second**. A quick accidental brush of
+     the switch shorter than that is completely ignored — nothing
+     changes, no bust, silent — so it's safe to fly with a hand near the
+     switch without it costing you the attempt. No tone or vibration
+     either way, intentional or accidental — once a brief brush can't
+     trigger this at all, an alert for the genuine case isn't needed.
+     What happens next depends on whether the timer had already reached
+     zero at the moment the hold crossed that threshold:
      - **Still counting** (well before the target) → the bust is
        immediate and so is the retry: the SAME target starts counting
        down again right away, no extra button press needed — same feel
@@ -69,8 +75,7 @@ voice announcements well.
        from, pre-filled with the interrupted bet's own time. That throw
        itself does **not** restart anything by itself here; a separate,
        deliberate launch from that screen is what actually arms and
-       starts again (same as step 3 above) — the alert is meant to make
-       you look at the screen at that point, not auto-continue past it.
+       starts again (same as step 3 above).
 6. **ALL IN** claims whatever time is left in the game window as your
    bet — computed at the moment you actually launch, not when you press
    the button. Unlike a normal bet, ALL IN still needs its own button

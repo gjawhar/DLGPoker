@@ -75,6 +75,11 @@ local S = {
   landingActive = false,
   landingCalls  = 0,        -- consecutive active wakeup() calls, not seconds
 
+  -- Debounces MOM_LAUNCH itself while genuinely mid-flight (armed,
+  -- confirmed, unresolved) -- see pollRelaunchDebounce(). Same
+  -- call-counting pattern as landingCalls above, same reason.
+  relaunchCalls = 0,
+
   -- Ground-fumbling safety: a release starts the timer, but a landing
   -- signal is only trusted once ZOOM_MODE has actually been exited
   -- (elevator push/pull) since that release -- see pollZoomConfirm().
@@ -149,6 +154,12 @@ local function defaults()
     -- landing. 0.5s wasn't long enough to rule that out; a full second of
     -- continuous brake is.
     landingDebounce   = 1.0,              -- seconds -- "ignore quick taps" (S5 UI)
+    -- 1/3s (pilot request, 2026-09, field test): MOM_LAUNCH itself needs
+    -- the same "ignore a quick brush" treatment while genuinely mid-
+    -- flight -- a pilot's hand can brush the launch switch without ever
+    -- meaning to relaunch, and a brush that short should not bust the
+    -- attempt at all, not even silently. See pollRelaunchDebounce().
+    relaunchDebounce  = 1 / 3,            -- seconds -- "ignore accidental brushes"
     stuckWarnThreshold = 2.0,             -- seconds (S6.5)
     holdResetThreshold = 0.8,             -- seconds -- +MIN/+SEC hold=0 (S5.1)
     display       = "day",                -- "day" | "night" (S5.3)
@@ -483,6 +494,7 @@ end
 function core.recoverFromWakeupError()
   S.landingActive = false
   S.landingCalls = 0
+  S.relaunchCalls = 0
 end
 
 -- ---------------------------------------------------------------- game lifecycle
@@ -700,22 +712,7 @@ end
 -- unambiguous signal that the previous flight is over, so treat it as an
 -- automatic bust (not a hit -- they didn't achieve the target, that's why
 -- they're re-launching) before letting the new throw proceed normally.
--- Audible + haptic alert (pilot request, 2026-09): this bust is a
--- SILENT correction otherwise -- there is no way for the pilot to tell,
--- from the switch alone, whether this new throw signal means "I actually
--- landed and I'm relaunching" or "I'm still flying and just brushed the
--- switch." Either way the previous attempt is now void, so surface that
--- loudly rather than let the timer quietly reset while airborne and
--- possibly go unnoticed until landing. system.playTone/playHaptic
--- confirmed present since Ethos 1.1.0 (official Lua reference), pcall-
--- wrapped the same defensive way every other native call in this file
--- already is.
-local function alertUnresolvedRelaunch()
-  pcall(function() system.playTone(600, 150, 120) end)
-  pcall(function() system.playTone(600, 150) end)
-  pcall(function() system.playHaptic(300) end)
-end
-
+--
 -- Two different responses depending on whether the target had already
 -- been reached at the moment of the relaunch (pilot report, 2026-09, real
 -- hardware: relaunched well before the target with the timer still
@@ -738,16 +735,24 @@ end
 -- ALREADY REACHED (liveVal <= 0), no brakes: the ORIGINAL report this
 -- mechanism was built for (pilot request, 2026-09: "you should be on a
 -- bet screen at that point... place the bet and launch from there").
--- Un-arms back to the editing screen instead of auto-restarting -- the
--- alert's whole point there is "stop and look at the screen," which a
--- silent auto-restart would defeat. Pre-fills the interrupted bet's own
--- target so re-throwing immediately reproduces the same bet, or it can be
--- adjusted first; a deliberate, separate throw is what actually arms+
--- starts again. S.suppressNextAutoConfirm exists specifically so THAT
--- deliberate throw has to be a genuinely separate press: without it, the
--- release half of THIS SAME throw would immediately fall into
--- handleLaunchFall's auto-confirm branch below and re-arm right back,
--- defeating the point just as much as not un-arming at all.
+-- Un-arms back to the editing screen instead of auto-restarting -- a
+-- deliberate, separate throw is what actually arms+starts again.
+-- S.suppressNextAutoConfirm exists specifically so THAT deliberate throw
+-- has to be a genuinely separate press: without it, the release half of
+-- THIS SAME throw would immediately fall into handleLaunchFall's
+-- auto-confirm branch below and re-arm right back, defeating the point
+-- just as much as not un-arming at all.
+--
+-- No audible/haptic alert (pilot request, 2026-09, THIRD field-test
+-- round -- removed after adding the debounce below made it unnecessary):
+-- earlier versions played a tone + vibration here since a bust used to
+-- fire on the very first touch of MOM_LAUNCH, with no way to tell a real
+-- relaunch from an accidental brush -- see pollRelaunchDebounce(), which
+-- now filters out anything shorter than S.cfg.relaunchDebounce before
+-- this function is ever called at all. A brush that short is now a
+-- complete no-op (nothing busts, nothing alerts, the flight just
+-- continues) -- and by the time a hold IS long enough to reach here, it's
+-- confidently a deliberate relaunch, which doesn't need an alarm either.
 local function autoBustUnresolvedFlight()
   local g = S.game
   if not g or not g.armed then return end
@@ -762,7 +767,6 @@ local function autoBustUnresolvedFlight()
     S.prevZoomConfirm = nil
     timerSet(bet.target_s)
     timerReset()
-    alertUnresolvedRelaunch()
     return
   end
 
@@ -776,15 +780,72 @@ local function autoBustUnresolvedFlight()
   g.editSec = (bet.target_s or 0) % 60
   S.suppressNextAutoConfirm = true
   core.setStatus("relaunched before landing was detected - place your next bet")
-  alertUnresolvedRelaunch()
+end
+
+-- Debounces MOM_LAUNCH itself while a bet is genuinely mid-flight (armed,
+-- confirmed, unresolved) -- pilot request, 2026-09, third field-test
+-- round: "the user could brush up against the launch button but won't
+-- hold it for say, more than a third of a second... just let them
+-- continue the flight." Previously autoBustUnresolvedFlight() ran on the
+-- very first rising edge of MOM_LAUNCH, so a brush that lasted a single
+-- frame busted the attempt just as surely as a deliberate relaunch.
+--
+-- Same level-based call-counting pattern pollLanding() already uses for
+-- LANDING_MODE, for the exact same reason (S6.4: os.time() can't resolve
+-- sub-second durations -- two samples well under a second apart can floor
+-- to the identical integer second). Deliberately watches the switch's
+-- LEVEL every wakeup(), not its edge -- handleLaunchRise()/
+-- handleLaunchFall() no longer call autoBustUnresolvedFlight() at all;
+-- this is now the ONLY path into it. Held below the threshold and
+-- released: S.relaunchCalls resets to 0 and NOTHING happens -- no bust,
+-- no timer change, no alert, exactly as if the touch never occurred.
+-- Held past the threshold: autoBustUnresolvedFlight() fires immediately
+-- (while the switch may still be held), and the EXISTING
+-- handleLaunchRise()/handleLaunchFall() logic -- unchanged below --
+-- already knows what to do with the resulting state (armed+unconfirmed
+-- restarts as a fresh attempt on release; un-armed+suppressed lands
+-- cleanly on the editing screen) once the switch's eventual rise/fall
+-- edges are processed.
+local function pollRelaunchDebounce()
+  local g = S.game
+  if not g or not g.armed or not S.flightConfirmed then
+    S.relaunchCalls = 0
+    return
+  end
+  local bet = currentBet()
+  if bet.result ~= "pending" or not S.launchSrc then
+    S.relaunchCalls = 0
+    return
+  end
+
+  local v = srcValue(S.launchSrc)
+  local active = v and v > 0
+
+  if active then
+    S.relaunchCalls = S.relaunchCalls + 1
+    if S.relaunchCalls >= secondsToCalls(S.cfg.relaunchDebounce or (1 / 3)) then
+      autoBustUnresolvedFlight()
+      -- Left non-zero deliberately: autoBustUnresolvedFlight()'s own
+      -- `bet.result ~= "pending"` guard already makes every further call
+      -- this same hold a no-op, so there is nothing to reset until the
+      -- switch actually goes inactive below.
+    end
+  else
+    S.relaunchCalls = 0
+  end
 end
 
 local function handleLaunchRise()
   local g = S.game
   if not g or not g.armed then return end
-  autoBustUnresolvedFlight()
-  if not g.armed then return end   -- autoBustUnresolvedFlight() just un-armed
-                                     -- this bet; nothing left here to reset
+  -- autoBustUnresolvedFlight() is no longer called from here -- see
+  -- pollRelaunchDebounce(), the only caller now. This early-return still
+  -- does the right thing on its own while genuinely mid-flight
+  -- (S.flightConfirmed true): the debounce poller is what decides
+  -- whether a relaunch happened at all, so this function does nothing
+  -- until either the flight is un-confirmed (ground re-grip, handled
+  -- below) or the debounce poller has already busted the old attempt
+  -- (which clears S.flightConfirmed itself, letting this fall through).
   -- Once the elevator-exit gesture has confirmed a real flight, the
   -- countdown is locked in -- a press can no longer reset it. Physically
   -- there is no way to re-grip a flying glider, and once confirmed, only
@@ -805,9 +866,10 @@ local function handleLaunchFall()
   if not g then return end
   if not g.armed then
     if S.suppressNextAutoConfirm then
-      -- This release is the tail end of the same throw whose RISE just
-      -- triggered autoBustUnresolvedFlight() -- land cleanly on the
-      -- editing screen instead of using it to auto-arm right back.
+      -- This release is the tail end of the same throw whose hold just
+      -- triggered autoBustUnresolvedFlight() via pollRelaunchDebounce()
+      -- -- land cleanly on the editing screen instead of using it to
+      -- auto-arm right back.
       S.suppressNextAutoConfirm = false
       return
     end
@@ -828,10 +890,14 @@ local function handleLaunchFall()
     S.flightConfirmed = false
     S.prevZoomConfirm = nil
   end
-  autoBustUnresolvedFlight()
-  if not g.armed then return end   -- autoBustUnresolvedFlight() just un-armed
-                                     -- this bet (defensive: normally rise
-                                     -- already caught this before fall runs)
+  -- autoBustUnresolvedFlight() is no longer called from here either --
+  -- see pollRelaunchDebounce(). If the debounce poller already busted
+  -- the old attempt this same hold (still-counting case), g.armed is
+  -- still true and S.flightConfirmed is already false by the time this
+  -- release fires, so the fall-through below correctly starts a fresh
+  -- attempt. If it un-armed instead (target-reached case),
+  -- S.suppressNextAutoConfirm caught this release already, above.
+  if not g.armed then return end
   -- Same lock-in as handleLaunchRise: once confirmed, the launch switch
   -- has no further effect on the timer at all, deliberately, even a
   -- spurious release signal.
@@ -1130,6 +1196,7 @@ function core.wakeup()
     end
   end
 
+  pollRelaunchDebounce()
   pollZoomConfirm()
   pollLanding()
 
