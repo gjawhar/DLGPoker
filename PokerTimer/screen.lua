@@ -325,18 +325,26 @@ local function paintLive(w, h)
   if not g then return end
   local bet = g.bets[g.idx]
 
+  -- SCORE as a badge, not plain text (pilot request, 2026-09, ThrowTrainer
+  -- look-and-feel review) -- a filled/bordered pill reads as "data" the
+  -- way BET N OF M's plain label doesn't need to. A thin dotted rule
+  -- (ThrowTrainer's own chart-boundary marker colour) replaces the empty
+  -- gap below the row as an explicit section break.
   lcd.font(FONT_S)
   draw.color(t.dim2)
   draw.text(6, CONTENT_TOP + 6, string.format("BET %d OF %d", g.idx, g.betCount), w * 0.5)
   local scoreStr = "SCORE " .. tostring(g.score) .. "s"
-  draw.text(w - 10 - lcd.getTextSize(scoreStr), CONTENT_TOP + 6, scoreStr)
+  local scoreBw = draw.badgeSize(scoreStr)
+  draw.badge(w - 6 - scoreBw, CONTENT_TOP + 3, scoreStr, t.accent, t.accentBg)
+
+  draw.dottedLine(6, CONTENT_TOP + 28, w - 12, t.marker)
 
   -- GAME LEFT is shown in every state (editing, armed, bust, hit, all-in
   -- pending), matching the approved mockup -- it had been accidentally
   -- scoped to only the editing branch, so it silently vanished the moment
   -- a bet was armed. Centred, matching the mockup's text-align rather than
   -- the left-aligned draw it had before.
-  local cy = CONTENT_TOP + 20
+  local cy = CONTENT_TOP + 36
   draw.color(t.dim2)
   local gl = "GAME LEFT"
   draw.text(math.floor((w - lcd.getTextSize(gl)) / 2), cy, gl)
@@ -359,10 +367,10 @@ local function paintLive(w, h)
     -- several bets back.
     if g.idx > 1 and g.bets[g.idx - 1].result == "hit" then
       lcd.font(FONT_S)
-      draw.color(t.good)
       local hitMsg = string.format("BET %d: HIT +%ds credited", g.idx - 1, g.bets[g.idx - 1].scored_s or 0)
-      draw.text(math.floor((w - lcd.getTextSize(hitMsg)) / 2), cy, hitMsg)
-      cy = cy + 20
+      local hitBw = draw.badgeSize(hitMsg)
+      draw.badge(math.floor((w - hitBw) / 2), cy, hitMsg, t.good, t.goodBg)
+      cy = cy + 26
     end
 
     lcd.font(FONT_XL)
@@ -527,20 +535,22 @@ local function paintLive(w, h)
     -- question, 2026-09: "is this per-bet or a game total?") -- bet.attempts
     -- already WAS per-bet all along (newBet() starts every bet at 0,
     -- see core.lua), this was purely a label-clarity gap, not a data
-    -- model change. Bumped to a bigger, bad-colored line specifically on
-    -- a BUST, since that's the exact moment a pilot needs this number to
-    -- decide whether to retry -- a small dim line was easy to miss right
-    -- when it mattered most.
+    -- model change. A badge specifically on a BUST (matching the SCORE/
+    -- HIT badges above -- pilot request, 2026-09, ThrowTrainer look-and-
+    -- feel review), since that's the exact moment a pilot needs this
+    -- number to decide whether to retry; a small dim line was easy to
+    -- miss right when it mattered most. Plain dim text elsewhere -- those
+    -- states don't need the same visual weight.
     if bet.attempts > 0 then
       local at = string.format("Attempt %d on this bet", bet.attempts)
+      lcd.font(FONT_S)
       if bet.result == "bust" then
-        lcd.font(FONT_M)
-        draw.color(t.bad)
+        local atBw = draw.badgeSize(at)
+        draw.badge(math.floor((w - atBw) / 2), attemptY, at, t.bad, t.badBg)
       else
-        lcd.font(FONT_S)
         draw.color(t.dim)
+        draw.text(math.floor((w - lcd.getTextSize(at)) / 2), attemptY, at)
       end
-      draw.text(math.floor((w - lcd.getTextSize(at)) / 2), attemptY, at)
     end
   end
 
@@ -675,7 +685,10 @@ local function paintLog(w, h)
   end
 
   cy = h - 56
-  draw.color(t.border); lcd.drawLine(10, cy, w - 10, cy)
+  -- Same thin dotted section-break as LIVE's top row (pilot request,
+  -- 2026-09, ThrowTrainer look-and-feel review) -- separates the game
+  -- list from the vs-average/vs-best stats below it.
+  draw.dottedLine(10, cy, w - 20, t.marker)
   cy = cy + 8
   lcd.font(FONT_S)
   if avg5 then

@@ -256,6 +256,52 @@ with zero indication why.
   reference before using it (get/set pattern, same as `direction()`/
   `countingSource()`/`start()` already established in this file).
 
+## ThrowTrainer look-and-feel redesign (2026-09, draw.lua + screen.lua)
+
+Pilot request after reviewing an HTML mockup (published as an Artifact,
+not kept in this repo) comparing DLG Poker's LIVE screen against
+ThrowTrainer's actual visual language: "this is what I was talking
+about... let's upgrade this design."
+
+- **`THEMES.day`/`THEMES.night` in draw.lua**: every value (both themes)
+  copied verbatim from `ThrowTrainer/draw.lua`'s `lightPalette()`/
+  `darkPalette()`, not re-invented. Night was already close to this by
+  coincidence (same project ecosystem); day was the one that actually
+  diverged -- DLG Poker's old day theme used flat, saturated colours
+  (`accent = 0x0B63C9`, `bad = 0xC5221F`) vs. ThrowTrainer's softer,
+  muted set. New `*Bg` tint variants (`accentBg`/`goodBg`/`badBg`/
+  `dimBg`) didn't exist before this -- DLG Poker had no tinted-background
+  concept at all -- and exist specifically to back the badge component.
+- **`draw.badge(x, y, text, color, bg, maxW)`** + **`draw.badgeSize()`**:
+  ported from ThrowTrainer's own `draw.badge()`, same flat-corner
+  filled+bordered-pill construction. Applied to LIVE's SCORE readout, the
+  "BET N: HIT +Ns credited" banner, and the "Attempt N on this bet" line
+  specifically on a BUST (the other attempt-count states keep plain dim
+  text -- they don't need the same visual weight).
+- **`draw.dottedLine(x, y, w, color)`**: thin dotted rule via
+  `lcd.pen(DOTTED)`, the same boundary-mark technique
+  ThrowTrainer's `draw.strip()` uses for chart section breaks (that
+  file's own comment already established DOTTED as hardware-confirmed --
+  "no DASHED constant has been confirmed on this target" -- same Ethos
+  Lua pen API, same radio family, not re-verified separately here).
+  Replaces LIVE's plain gap under the BET/SCORE row and LOG's plain
+  divider line above the vs-average/vs-best stats, both in `t.marker`
+  (the same orange ThrowTrainer's own marker color uses).
+- **One thing the mockup couldn't actually promise**: it used a
+  monospace web font ("JetBrains Mono") for hero numbers, since that's
+  free to do in HTML. Checked the real Ethos Lua font constants before
+  building anything (`FONT_XXS` through `FONT_XXL`, some with `_BOLD`/
+  `_ITALIC` variants) against the official reference -- confirmed these
+  are all sizes of ONE system typeface, not a choice of font families.
+  There is no way to render digits in an actual monospace face on real
+  hardware. GAME LEFT / the live countdown stay on `FONT_L`/`FONT_XL` (no
+  typeface change) rather than promising something the radio can't do.
+
+Colour changes propagate automatically everywhere `draw.theme()` is
+already read (SETUP's arrow steppers, SUMMARY's per-bet result colours,
+CONFIG's "About" text, etc.) -- only the screens getting NEW structural
+elements (badges, dotted dividers) needed screen.lua changes at all.
+
 ## LOG screen navigation fixes (2026-09, screen.lua only)
 
 Two real bugs from a pilot field report, both in `screen.event()`'s

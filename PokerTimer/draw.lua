@@ -4,20 +4,29 @@
 -- ecosystem's tools) is available as a display setting. Colour values are
 -- the only thing that changes between the two; layout and type scale stay
 -- identical, matching the approved mockups exactly (poker_timer_screens_v5).
-
-local core = ...
-local draw = {}
-
+--
+-- Palette + badge component redesign (pilot request, 2026-09: "the look
+-- and feel of ThrowTrainer"). Every value below (both themes) is copied
+-- verbatim from ThrowTrainer/draw.lua's own lightPalette()/darkPalette(),
+-- not re-invented here -- DLG Poker's night theme was already close to
+-- it by coincidence; day was the one that actually diverged (flat,
+-- saturated colours vs. ThrowTrainer's softer, muted set). The *Bg
+-- variants are new -- DLG Poker had no tinted-background concept before
+-- this -- and exist specifically to back draw.badge() below.
 local THEMES = {
   day = {
-    bg = 0xFFFFFF, alt = 0xF2F2F2, txt = 0x141414, dim2 = 0x5A5A5A, dim = 0x9A9A9A,
-    border = 0xDCDCDC, accent = 0x0B63C9, good = 0x1E8E3E, bad = 0xC5221F,
-    amber = 0xA35C00, cardRed = 0xC81E2E, cardBlack = 0x141414,
+    bg = 0xF6F6F8, alt = 0xF2F2F2, txt = 0x141416, dim2 = 0x5A5A5A, dim = 0x6E6E74,
+    border = 0xC3C3C8, accent = 0x1469BE, accentBg = 0xE5EEF8,
+    good = 0x238C4B, goodBg = 0xD7F0DE, bad = 0xBE372D, badBg = 0xFADEDA,
+    amber = 0xC3870F, marker = 0xC35F19, dimBg = 0xDEDEE2,
+    cardRed = 0xC81E2E, cardBlack = 0x141414,
   },
   night = {
-    bg = 0x0C0C0D, alt = 0x1A1A1A, txt = 0xE8E8E8, dim2 = 0x999999, dim = 0x6B6B6B,
-    border = 0x2A2A2A, accent = 0x4AA8F0, good = 0x5FC27D, bad = 0xE2534A,
-    amber = 0xE8A93A, cardRed = 0xFF5468, cardBlack = 0xEAEAEA,
+    bg = 0x0E0E10, alt = 0x1A1A1A, txt = 0xEBEBEB, dim2 = 0x999999, dim = 0x8C8C8C,
+    border = 0x5A5A5A, accent = 0x50AAF0, accentBg = 0x1E2C3D,
+    good = 0x5AC878, goodBg = 0x142E1E, bad = 0xDC5A46, badBg = 0x321816,
+    amber = 0xF0BE3C, marker = 0xE68228, dimBg = 0x2A2A2A,
+    cardRed = 0xFF5468, cardBlack = 0xEAEAEA,
   },
 }
 
@@ -67,6 +76,63 @@ function draw.signed(seconds)
   local n = math.floor(seconds + 0.5)
   local sign = (n >= 0) and "+" or "-"
   return sign .. tostring(math.abs(n)) .. "s"
+end
+
+-- ---------------------------------------------------------------- badge
+
+-- A small filled-and-bordered pill: tinted background + coloured 1px
+-- border + text. Ported from ThrowTrainer/draw.lua's own draw.badge()
+-- (pilot request, 2026-09) -- flat corners rather than rounded, same
+-- reasoning as there: no rounded-rect primitive to lean on, and a sharp-
+-- cornered tinted rectangle reads the same way at this size. Assumes
+-- FONT_S is already set (matches every call site -- the caller has
+-- usually just set it for a label anyway, so this doesn't force a
+-- redundant lcd.font() call for callers that already have the right one).
+-- Returns the drawn width/height so a caller can right-align or centre a
+-- badge before drawing it.
+function draw.badge(x, y, text, color, bg, maxW)
+  local tw = lcd.getTextSize(text)
+  if maxW and tw > maxW - 10 then
+    text = draw.fitText(text, maxW - 10)
+    tw = lcd.getTextSize(text)
+  end
+  local _, th = lcd.getTextSize("0")
+  th = (th and th > 0) and th or 14
+  local bw, bh = tw + 10, th + 6
+  draw.color(bg)
+  lcd.drawFilledRectangle(x, y, bw, bh)
+  draw.color(color)
+  lcd.drawRectangle(x, y, bw, bh, 1)
+  draw.text(x + 5, y + 3, text, tw + 2)
+  return bw, bh
+end
+
+-- Same measurement math as draw.badge() without drawing anything -- lets
+-- a caller right-align a badge (e.g. against the screen edge) before it
+-- knows the final x, without drawing off-canvas just to measure first.
+function draw.badgeSize(text, maxW)
+  local tw = lcd.getTextSize(text)
+  if maxW and tw > maxW - 10 then
+    tw = lcd.getTextSize(draw.fitText(text, maxW - 10))
+  end
+  local _, th = lcd.getTextSize("0")
+  th = (th and th > 0) and th or 14
+  return tw + 10, th + 6
+end
+
+-- ---------------------------------------------------------------- divider
+
+-- Thin dotted rule (pilot request, 2026-09) -- the same DOTTED-pen
+-- boundary-mark treatment ThrowTrainer's draw.strip() uses for chart
+-- section breaks, reused here as a general section divider. DOTTED
+-- itself is the one already hardware-confirmed there ("no DASHED
+-- constant has been confirmed on this target") -- same Ethos Lua pen
+-- API, same radio family, not re-verified separately for this project.
+function draw.dottedLine(x, y, w, color)
+  draw.color(color)
+  lcd.pen(DOTTED)
+  lcd.drawLine(x, y, x + w, y)
+  lcd.pen(SOLID)
 end
 
 -- ---------------------------------------------------------------- chrome
