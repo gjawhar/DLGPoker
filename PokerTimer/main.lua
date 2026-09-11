@@ -57,7 +57,7 @@ local function event(widget, category, value, x, y)
   -- Wrapped for the same reason wakeup() and paint() already are -- this
   -- is the one callback that still had no protection, and it's also
   -- where the newest, least-verified code lives (touch hit-testing).
-  local ok, result = pcall(screen.event, value, x, y)
+  local ok, result = pcall(screen.event, value, x, y, category)
   if not ok then
     core.setStatus("event error - see log: " .. tostring(result))
     return true   -- swallow the event rather than letting it propagate

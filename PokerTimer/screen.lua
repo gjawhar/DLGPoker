@@ -11,18 +11,6 @@ local screen = {}
 local SCREEN = core.SCREEN
 local inForm = false
 
--- Touch double-fire workaround: a single tap on a touch-capable radio
--- delivers TWO event() calls (press, then release) with no reliable
--- value/category signal telling them apart -- confirmed on the X20RS
--- simulator in this project's sibling ThrowTrainer widget, where an
--- unpaired hit-test toggled a key on and immediately back off from one
--- tap. Fix: treat the first touch call on a key as the action and
--- unconditionally swallow the very next touch call, regardless of where
--- it lands or what state the first call changed. See the swallow check
--- at the very top of screen.event() below for why it must run before
--- the inForm gate specifically.
-local touchConsuming = false
-
 -- Touch support (X20RS and other touch-capable radios): tap the on-screen
 -- keys directly instead of routing through the rotary + FS switches. Same
 -- heuristic already confirmed working in this project's own Poker Probe --
@@ -36,6 +24,20 @@ local function isTouchCapable()
   local board = (ok and v and v.board) or ""
   touchCapable = not string.find(tostring(board), "X14")
   return touchCapable
+end
+
+-- Ethos delivers a tap as two event() calls -- TOUCH_START then TOUCH_END,
+-- category EVT_TOUCH -- plus TOUCH_MOVE/TOUCH_LONG for drags and holds
+-- (confirmed with the Dial In probe on 26.1.2: 1 / 16640 / 16641 / 16642 /
+-- 16643). Fallback literals cover firmware that predates the named globals.
+local EVT_TOUCH_CAT = rawget(_G, "EVT_TOUCH") or 1
+local TOUCH_END_VAL = rawget(_G, "TOUCH_END") or 16641
+
+-- A caller that threads category through gets an exact answer; one that
+-- doesn't falls back to the old "touch radio with real coordinates" guess.
+local function isTouchEvent(category, x, y)
+  if category ~= nil then return category == EVT_TOUCH_CAT end
+  return isTouchCapable() and x ~= nil and y ~= nil and x > 0 and y > 0
 end
 
 -- Hit-test rectangles for the current screen's keys, rebuilt every paint
@@ -906,15 +908,14 @@ local function activate(scr, i)
   end
 end
 
-function screen.event(value, x, y)
-  -- Must run before EVERY other gate, including inForm -- activate() can
+function screen.event(value, x, y, category)
+  -- Act on a tap's release only. Every other touch phase (start, move,
+  -- long-hold) is consumed here, ahead of the inForm gate: activate() can
   -- itself flip inForm true (CONFIG key) or change core.S.screen (VIEW
-  -- GAME LOG, NEW GAME, BACK). If this swallow check were nested inside
-  -- the inForm branch below, the release half of a tap that just opened
-  -- the form would arrive with inForm already true and fall through to
-  -- "let the form own everything else" unswallowed.
-  if touchConsuming and isTouchCapable() and x and y and x > 0 and y > 0 then
-    touchConsuming = false
+  -- GAME LOG, NEW GAME, BACK), so the same tap's other phases must never
+  -- reach whatever is now underneath them.
+  local touch = isTouchEvent(category, x, y)
+  if touch and value ~= TOUCH_END_VAL then
     return true
   end
 
@@ -930,21 +931,16 @@ function screen.event(value, x, y)
   local scr = core.S.screen
 
   -- Touch: hit-test against the rectangles paintKeys()/paintSetup()/
-  -- paintLive() recorded this same frame. Same caveat already documented
-  -- in this project's Poker Probe -- what a genuine touch event reports
-  -- for `category` is unconfirmed, so this deliberately keys off raw x/y
-  -- rather than category, gated by the touch-capable board check so it
-  -- can never activate on an X14 even if a stray event arrives.
+  -- paintLive() recorded this same frame.
   --
   -- valueRects checked first: it's the more specific target (the +/-
   -- stepper buttons), and a button can sit close to other content, so
   -- resolving it before the footer keyRects avoids any ambiguity if the
   -- two ever overlapped.
-  if isTouchCapable() and x and y and x > 0 and y > 0 then
+  if touch then
     for _, r in ipairs(valueRects) do
       if x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h then
         r.action()
-        touchConsuming = true
         return true
       end
     end
@@ -952,7 +948,6 @@ function screen.event(value, x, y)
       if x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h then
         focus[scr] = i
         activate(scr, i)
-        touchConsuming = true
         return true
       end
     end
