@@ -412,6 +412,29 @@ local function alwaysOnSource()
   return nil
 end
 
+-- The "---" (no start condition) Source, same lookup pattern. Setting it
+-- as the start condition is the ONLY thing that stops an Always-on
+-- timer: hardware photo, X14, 2026-09-14 -- after the app zeroed Timer3
+-- on close it read -00:00:19 and falling. A countdown with Always on
+-- doesn't sit at zero, it keeps counting through it. So "zero the
+-- value" (GitHub #1's original decision) is necessary but not
+-- sufficient; timerSet() below switches the start condition too.
+local function noneSource()
+  local ok, src = pcall(system.getSource, { category = CATEGORY_NONE, member = 0, options = 0 })
+  if ok and src ~= nil and type(src) ~= "number" then return src end
+  return nil
+end
+
+-- One choke point for run/stop: every existing timerSet(0) call site
+-- (bust, hit, game end, tool close) now also switches the timer OFF, and
+-- every timerSet(target > 0) (arming / restarting a bet) switches it back
+-- to Always on -- without touching any of those call sites.
+local function setTimerRunning(run)
+  if not S.timerObj then return end
+  local src = run and alwaysOnSource() or noneSource()
+  if src then pcall(function() S.timerObj:startCondition(src) end) end
+end
+
 local function autoConfigTimer()
   if not S.timerObj then return end
   pcall(function() S.timerObj:direction(-1) end)
@@ -429,6 +452,7 @@ end
 local function timerSet(seconds)
   if not S.timerObj then return end
   pcall(function() S.timerObj:start(seconds) end)
+  setTimerRunning((seconds or 0) > 0)
 end
 
 local function timerReset()

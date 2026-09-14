@@ -244,7 +244,13 @@ local function paintSetup(w, h)
   draw.color(t.dim2)
   draw.text(col1X, cy, "WINDOW")
   draw.text(col2X, cy, "BETS")
-  cy = cy + 16
+  -- Gap from the label's MEASURED height, not a fixed 16 (pilot photo,
+  -- X14, 2026-09-14: the real FONT_S is taller than the simulator's, so
+  -- the tinted value box drawn below -- which starts 4px above the value
+  -- -- painted over the bottom of the labels). +6 clear, +4 for the box.
+  local _, labelH = lcd.getTextSize("WINDOW")
+  labelH = (labelH and labelH > 0) and labelH or 14
+  cy = cy + labelH + 10
 
   -- Boxed, tinted background behind each value -- same treatment LIVE's
   -- MIN/SEC digit groups already get (pilot request, 2026-09, same "visual

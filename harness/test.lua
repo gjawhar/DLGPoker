@@ -31,10 +31,14 @@ local alertCalls = { tone = 0, haptic = 0 }
 -- table form {category=CATEGORY_ALWAYS_ON, member=0} resolves it -- the
 -- bare-constant form returns nil on hardware, and the mock mirrors that.
 local alwaysOnSource = { name = function() return "Always on" end, category = function() return 1 end, member = function() return 0 end }
+-- The "---" Source (no start condition), same real readback shape.
+CATEGORY_NONE = 0
+local noneSource = { name = function() return "---" end, category = function() return 0 end, member = function() return 0 end }
 system = {
   getSource = function(spec)
     if type(spec) ~= "table" then return nil end
     if spec.category == CATEGORY_ALWAYS_ON and spec.member == 0 then return alwaysOnSource end
+    if spec.category == CATEGORY_NONE and spec.member == 0 then return noneSource end
     if spec.name then return makeSource(spec.name) end
     return nil
   end,
@@ -177,6 +181,10 @@ setSrc("MOM_LAUNCH", -100); core.wakeup()  -- release: the actual throw --
 check("bet armed by the throw itself", core.S.game.armed == true)
 check("bet target is 100s", core.S.game.bets[1].target_s == 100, tostring(core.S.game.bets[1].target_s))
 check("timer reset to target on release", core.S.timerObj:value() == 100, tostring(core.S.timerObj:value()))
+do
+  local sc = core.S.timerObj:startCondition()
+  check("timer switched ON (Always on) by the throw", sc ~= nil and sc:name() == "Always on", sc and sc:name() or "nil")
+end
 check("attempts incremented on release", core.S.game.bets[1].attempts == 1,
   "attempts=" .. tostring(core.S.game.bets[1].attempts))
 setSrc("ZOOM_MODE", 100)   -- latches true, same as a real press (Sticky)
@@ -795,6 +803,11 @@ check("bust recorded", core.S.game.bets[1].result == "bust")
 -- simulation ticks fractionally between the reset and this check, same
 -- as the real Timer3 would between reset() and the next value() read.
 local bustVal = core.S.timerObj:value()
+-- Hardware, 2026-09-14: an Always-on countdown doesn't stay at zero, it
+-- keeps counting negative -- so every zeroing must ALSO switch the start
+-- condition to "---". timerSet(0) does both.
+local function startCondName() local sc = core.S.timerObj:startCondition() return sc and sc:name() or "nil" end
+check("timer switched OFF (start condition ---) on bust", startCondName() == "---", startCondName())
 check("timer silenced immediately on bust", bustVal ~= nil and math.abs(bustVal) < 1,
   tostring(bustVal))
 setSrc("LANDING_MODE", -100); core.wakeup()
@@ -817,6 +830,7 @@ setSrc("LANDING_MODE", 100)
 pump(1.1)   -- last bet, hit -> auto-advanceBet() -> finalizeGame()
 check("game finalized to SUMMARY", core.S.screen == core.SCREEN.SUMMARY)
 local endVal = core.S.timerObj:value()
+check("timer switched OFF at game end", startCondName() == "---", startCondName())
 check("timer silenced at game end", endVal ~= nil and math.abs(endVal) < 1,
   tostring(endVal))
 
@@ -906,6 +920,7 @@ check("(26a) flying: confirmed, timer counting", core.S.flightConfirmed == true 
 core.onClose()
 local closeVal = core.liveTimerValue()
 check("(26a) timer zeroed on close", closeVal ~= nil and math.abs(closeVal) < 1, tostring(closeVal))
+check("(26a) timer switched OFF on close (start condition ---)", startCondName() == "---", startCondName())
 check("(26a) in-flight attempt recorded as a bust", core.S.game.bets[1].result == "bust",
   tostring(core.S.game.bets[1].result))
 check("(26a) still armed for a normal retry", core.S.game.armed == true)
