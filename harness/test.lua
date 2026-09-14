@@ -217,6 +217,10 @@ check("score credited", core.S.game.score == 100, tostring(core.S.game.score))
 -- bet's own result/scored_s stay intact for screen.lua's "BET N: HIT"
 -- banner to read afterward.
 check("auto-advanced to the next bet", core.S.game.idx == 2, tostring(core.S.game.idx))
+-- GitHub #1: a hit silences the timer too, not just a bust -- otherwise
+-- it counts negative (re-firing its own callouts) until the next throw.
+local hitVal = core.S.timerObj:value()
+check("timer silenced on hit", hitVal ~= nil and math.abs(hitVal) < 1, tostring(hitVal))
 check("new bet not armed -- editable immediately", core.S.game.armed == false)
 check("resolved bet's hit result preserved for the banner", core.S.game.bets[1].result == "hit",
   tostring(core.S.game.bets[1].result))
@@ -426,6 +430,9 @@ check("score increased by the target", core.S.game.score == scoreBefore + 60,
   "score=" .. tostring(core.S.game.score))
 check("confirmation cleared", core.S.flightConfirmed == false)
 check("advanced to the next bet", core.S.game.idx == 3, "idx=" .. tostring(core.S.game.idx))
+local relaunchHitVal = core.S.timerObj:value()
+check("timer silenced on a target-reached relaunch hit (GitHub #1)",
+  relaunchHitVal ~= nil and math.abs(relaunchHitVal) < 1, tostring(relaunchHitVal))
 check("un-armed, not counting down", core.S.game.armed == false)
 check("edit fields reset to the plain default, not the old bet's target",
   core.S.game.editMin == 0 and core.S.game.editSec == 30,
@@ -858,6 +865,59 @@ check("renameTimerToDefault() is a no-op with nothing resolved",
 deniedTimerNames["Timer3"] = nil
 core.resolveTimerNow()
 check("cleaned up: resolves normally again", core.timerMissing() == false)
+
+-- ---- Test 26: core.onClose() (GitHub #1) -- leaving the tool zeroes the
+-- timer, and leaving mid-FLIGHT also records the in-progress attempt as
+-- a bust so a reopen + brake can't score a phantom hit off the zeroed
+-- timer (the target-reached rule would otherwise waive confirmation).
+
+-- (a) mid-flight: armed, one real throw, confirmed, timer still counting
+core.S.screen = core.SCREEN.LIVE
+core.S.game = { startTs = os.time(), deadline = os.time() + 600, windowS = 600, betCount = 2,
+                bets = { { idx = 1, target_s = 60, result = "pending", attempts = 0, scored_s = 0, allIn = false },
+                         { idx = 2, target_s = nil, result = "pending", attempts = 0, scored_s = 0, allIn = false } },
+                idx = 1, score = 0, armed = true, editMin = 1, editSec = 0, allInPending = false }
+core.S.flightConfirmed = false
+core.S.prevZoomConfirm = nil
+setSrc("ZOOM_MODE", -100)
+setSrc("MOM_LAUNCH", 100); core.wakeup()
+setSrc("ZOOM_MODE", 100)
+setSrc("MOM_LAUNCH", -100); core.wakeup()   -- release: attempt 1, 60s timer running
+setSrc("ZOOM_MODE", -100); core.wakeup()     -- elevator exit: confirmed
+tick(5)
+check("(26a) flying: confirmed, timer counting", core.S.flightConfirmed == true and core.liveTimerValue() > 50,
+  "live=" .. tostring(core.liveTimerValue()))
+core.onClose()
+local closeVal = core.liveTimerValue()
+check("(26a) timer zeroed on close", closeVal ~= nil and math.abs(closeVal) < 1, tostring(closeVal))
+check("(26a) in-flight attempt recorded as a bust", core.S.game.bets[1].result == "bust",
+  tostring(core.S.game.bets[1].result))
+check("(26a) still armed for a normal retry", core.S.game.armed == true)
+check("(26a) confirmation cleared", core.S.flightConfirmed == false)
+-- reopen + brake must NOT score anything: bust already recorded, and the
+-- landing gate requires confirmation again (timer at zero alone would
+-- have waived it -- that's the phantom-hit path this closes)
+setSrc("LANDING_MODE", 100); pump(1.1); setSrc("LANDING_MODE", -100); core.wakeup()
+check("(26a) reopen + brake does not turn the closed flight into a hit",
+  core.S.game.bets[1].result == "bust" and core.S.game.score == 0,
+  "result=" .. tostring(core.S.game.bets[1].result) .. " score=" .. tostring(core.S.game.score))
+
+-- (b) not armed (editing screen, nothing in flight): only the timer moves
+core.S.game.armed = false
+core.S.game.bets[1].result = "pending"
+core.S.timerObj:start(45); core.S.timerObj:reset()
+core.onClose()
+local closeVal2 = core.liveTimerValue()
+check("(26b) timer zeroed on close while editing", closeVal2 ~= nil and math.abs(closeVal2) < 1, tostring(closeVal2))
+check("(26b) nothing else touched", core.S.game.bets[1].result == "pending" and core.S.game.armed == false)
+
+-- (c) no game at all, and no timer object: must be a safe no-op
+core.S.game = nil
+local savedTimer = core.S.timerObj
+core.S.timerObj = nil
+local okClose = pcall(core.onClose)
+check("(26c) onClose is a safe no-op with no game and no timer", okClose == true)
+core.S.timerObj = savedTimer
 
 print("")
 if failures == 0 then print("ALL TESTS PASSED")

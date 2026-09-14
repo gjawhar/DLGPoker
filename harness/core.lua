@@ -516,6 +516,42 @@ function core.recoverFromWakeupError()
   S.relaunchCalls = 0
 end
 
+-- Called from main.lua's close() when the pilot leaves the tool (GitHub
+-- #1, pilot request 2026-09-13). The target timer's start condition is
+-- Always, so with the tool gone nothing else ever stops it: it would run
+-- into negative numbers and keep re-firing its own threshold callouts.
+-- Zero the value only -- deliberately NOT flipping the start condition
+-- off ("no use in doing both"). finalizeGame() and every hit/bust path
+-- already zero it, so this only matters for leaving mid-game.
+--
+-- Leaving mid-FLIGHT is the one case that needs more than a reset: with
+-- the timer zeroed but the attempt still armed-and-pending, reopening
+-- the tool and braking would read `val <= 0` and score a HIT the flight
+-- never earned (the target-reached rule waives elevator confirmation).
+-- So an in-progress attempt is recorded as a bust first -- the flight is
+-- unobservable once the tool is closed, and a bust keeps the bet armed
+-- for a normal retry on the next throw, exactly like a real bust does.
+-- A hard power-off never reaches this (no Lua callback runs); that case
+-- is out of scope by design.
+function core.onClose()
+  local g = S.game
+  if g and g.armed then
+    -- g.bets[g.idx] directly, not currentBet(): that local is defined
+    -- further down this file, so from here it would resolve as a nil
+    -- global -- the exact syntax-passes-runtime-fails trap this project
+    -- documented after the draw.lua incident. Caught by harness Test 26.
+    local bet = g.bets[g.idx]
+    if bet and bet.attempts > 0 and bet.result == "pending" then
+      bet.result = "bust"
+      S.flightConfirmed = false
+      S.prevZoomConfirm = nil
+      core.setStatus("bust - tool closed mid-flight; relaunch to retry")
+    end
+  end
+  timerSet(0)
+  timerReset()
+end
+
 -- ---------------------------------------------------------------- game lifecycle
 
 local function newBet(idx)
@@ -798,6 +834,8 @@ local function autoBustUnresolvedFlight()
   S.prevZoomConfirm = nil
   S.suppressNextAutoConfirm = true
   core.setStatus("hit")
+  timerSet(0)     -- same as pollLanding()'s hit branch (GitHub #1): don't
+  timerReset()    -- leave the timer counting negative until the next throw
   -- Alert restored for this branch specifically (pilot correction,
   -- 2026-09: the earlier removal was scoped to the still-counting branch
   -- only) -- system.playTone/playHaptic confirmed present since Ethos
@@ -1056,6 +1094,14 @@ local function pollLanding()
           bet.scored_s = bet.target_s
           g.score = (g.score or 0) + (bet.target_s or 0)
           core.setStatus("hit")
+          -- Silence the timer on a hit too (GitHub #1, 2026-09-13) -- only
+          -- the bust branch below did this before, so after a hit the
+          -- physical timer kept counting into negative numbers (and
+          -- re-firing its own threshold callouts) all the way until the
+          -- next throw re-armed it. The next handleLaunchFall() sets the
+          -- new target regardless, so nothing else changes.
+          timerSet(0)
+          timerReset()
           -- Auto-advance straight to the next bet (pilot request, 2026-09:
           -- "100% of users hit NEXT BET anyway"). This used to be skipped
           -- deliberately -- advanceBet() here once meant "hit" got

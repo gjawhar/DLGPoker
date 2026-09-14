@@ -67,6 +67,10 @@ local function event(widget, category, value, x, y)
 end
 
 local function close(widget)
+  -- Zero the target timer on the way out (GitHub #1) -- pcall-wrapped
+  -- like every other callback here, so a failure can never block the
+  -- close itself.
+  pcall(core.onClose)
   return true
 end
 

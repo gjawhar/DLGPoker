@@ -497,6 +497,34 @@ whole `PokerTimer/` folder first would take `Files/games.csv` etc. with it.
 Ethos scans scripts only at boot — a full restart is required after any
 install, not just closing/reopening the tool.
 
+## Timer is zeroed on every exit path (2026-09-14, GitHub #1)
+
+The target timer's start condition is Always, so nothing but this app
+ever stops it -- left alone it runs into negative numbers and keeps
+re-firing its own SYSTEM > TIMERS threshold callouts. Every path out of
+an attempt now calls `timerSet(0)` + `timerReset()`: bust (already did),
+game end via `finalizeGame()` (already did), **hit** (both
+`pollLanding()`'s hit branch and `autoBustUnresolvedFlight()`'s
+target-reached branch -- these previously left it counting until the
+next throw re-armed it), and **leaving the tool** via `main.lua`'s
+`close()` -> `core.onClose()` (previously a no-op).
+
+`core.onClose()` deliberately zeroes the VALUE only -- pilot decision:
+do not also flip the start condition off ("no use in doing both").
+Leaving mid-flight additionally records the in-progress attempt as a
+bust (armed stays true, so it's a normal retry on reopen): with the timer
+zeroed but the attempt still pending, a reopen + brake would otherwise
+read `val <= 0` and score a phantom hit, since the target-reached rule
+waives elevator confirmation. A hard power-off never reaches `close()`
+and is out of scope by design. Harness Test 26 covers all three cases
+(mid-flight, editing, no game/no timer) and the reopen+brake trap.
+
+**Scope trap, again**: `core.onClose()` sits above `currentBet()` in the
+file, so it must index `g.bets[g.idx]` directly -- calling `currentBet()`
+from there resolves as a nil global. Syntax-checked clean, failed only
+at runtime, caught by Test 26 on its first run. Same class of bug as the
+draw.lua incident in [[reference_lua_testing_via_lupa]].
+
 ## Known-open items (as of last session)
 
 1. **Timer1 coexistence** — the pilot runs a separate Timer1 (count-up,
