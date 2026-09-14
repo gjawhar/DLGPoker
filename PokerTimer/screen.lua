@@ -148,6 +148,20 @@ local function keysFor(scr)
   return {}
 end
 
+-- Extra rotary-focus targets beyond the footer keys (pilot request, X14,
+-- 2026-09-14): on the betting screen the wheel should walk the footer
+-- keys and then continue INTO the MIN and SEC boxes themselves, and
+-- ENTER on a box edits that field exactly as ENTER on its footer key
+-- does. focus[LIVE] therefore ranges over #keys + #extra; an index past
+-- the footer maps to one of these fields.
+local function extraFocusTargets(scr)
+  if scr == SCREEN.LIVE then
+    local g = core.S.game
+    if g and not g.armed then return { "min", "sec" } end
+  end
+  return {}
+end
+
 -- Tap-to-edit (pilot request, 2026-09) -- see the comment above valueRects'
 -- declaration. Defined here, after keysFor(), rather than up with the rest
 -- of the touch/rotary state, because toggleEditField() calls keysFor() --
@@ -323,9 +337,12 @@ local function paintSetup(w, h)
   draw.chrome(w, "DLG Poker")
   draw.color(t.bg); lcd.drawFilledRectangle(0, CHROME_H, w, h - CHROME_H)
 
-  -- GitHub #2: these two own the whole screen while they're up.
-  if core.S.timerNotice then paintTimerNotice(w, h, t, core.S.timerNotice) return end
-  if core.S.timerPicker then paintTimerPicker(w, h, t, core.S.timerPicker) return end
+  -- GitHub #2: these two own the whole screen while they're up. Focus is
+  -- pinned to key 4 (CONTINUE / USE THIS) so the footer highlight sits on
+  -- the one thing that does anything -- pilot report, X14, 2026-09-14:
+  -- with focus left on slot 1 ("-") the key looked unreachable by wheel.
+  if core.S.timerNotice then focus[SCREEN.SETUP] = 4 paintTimerNotice(w, h, t, core.S.timerNotice) return end
+  if core.S.timerPicker then focus[SCREEN.SETUP] = 4 paintTimerPicker(w, h, t, core.S.timerPicker) return end
 
   local cy = CONTENT_TOP + 18
   lcd.font(FONT_S)
@@ -559,32 +576,38 @@ local function paintLive(w, h)
     -- planned but never actually drawn.
     local _, boxH = lcd.getTextSize("0")
     boxH = (boxH and boxH > 0) and boxH + 8 or 48
-    draw.color(t.alt)
-    lcd.drawFilledRectangle(minX - 8, cy - 4, minW + 16, boxH)
-    lcd.drawFilledRectangle(secX - 8, cy - 4, secW + 16, boxH)
+
+    -- Each box has three states (pilot request, X14, 2026-09-14: the
+    -- wheel now walks into these boxes after the footer keys):
+    --   plain    -- t.alt fill
+    --   focused  -- wheel is on it: accent outline
+    --   editing  -- ENTER was pressed here (or the box tapped, or the
+    --               footer key used): accent fill tint + outline, wheel
+    --               now adjusts the value
+    local keysN = #keysFor(SCREEN.LIVE)
+    local f = focus[SCREEN.LIVE] or 1
+    local function boxFill(field, n, bx, bw)
+      draw.color((rotaryEditField == field) and t.accentBg or t.alt)
+      lcd.drawFilledRectangle(bx, cy - 4, bw, boxH)
+    end
+    local function boxEdge(field, n, bx, bw)
+      if rotaryEditField == field or f == keysN + n then
+        draw.color(t.accent)
+        lcd.drawRectangle(bx, cy - 4, bw, boxH, 2)
+      end
+      -- Touch pilots tap the box itself to edit (pilot request, 2026-09).
+      if isTouchCapable() then registerEditTap(bx, cy - 4, bw, boxH, field) end
+    end
+    boxFill("min", 1, minX - 8, minW + 16)
+    boxFill("sec", 2, secX - 8, secW + 16)
 
     draw.color(t.accent)
     draw.text(minX, cy, minStr)
     draw.text(colonX, cy, ":")
     draw.text(secX, cy, secStr)
 
-    -- Touch pilots (pilot request, 2026-09) tap the boxed digit group
-    -- directly to enter the same rotary edit mode ENTER gives non-touch
-    -- radios -- the box itself (already drawn above) is the tap zone, no
-    -- separate arrow widget needed. Everyone still gets the FS1/FS2
-    -- captions underneath -- FS1/FS2 still bump the field one-shot same
-    -- as always, touch or not.
-    if isTouchCapable() then
-      local function editZone(field, bx, bw)
-        if rotaryEditField == field then
-          draw.color(t.accent)
-          lcd.drawRectangle(bx, cy - 4, bw, boxH, 2)
-        end
-        registerEditTap(bx, cy - 4, bw, boxH, field)
-      end
-      editZone("min", minX - 8, minW + 16)
-      editZone("sec", secX - 8, secW + 16)
-    end
+    boxEdge("min", 1, minX - 8, minW + 16)
+    boxEdge("sec", 2, secX - 8, secW + 16)
 
     lcd.font(FONT_S)
     draw.color(t.dim)
@@ -1146,8 +1169,11 @@ function screen.event(value, x, y, category)
       logTop = math.max(1, math.min(maxTop, logTop + d))
     else
       local keys = keysFor(scr)
-      if #keys > 0 then
-        focus[scr] = ((focus[scr] - 1 + d) % #keys) + 1
+      local total = #keys + #extraFocusTargets(scr)
+      if total > 0 then
+        local f = focus[scr] or 1
+        if f > total then f = total end
+        focus[scr] = ((f - 1 + d) % total) + 1
       end
     end
     return true
@@ -1178,6 +1204,17 @@ function screen.event(value, x, y, category)
           activate(scr, i)
           return true
         end
+      end
+    end
+    -- Focus is on one of the value boxes (past the footer keys): ENTER
+    -- edits that field, same as ENTER on its footer key.
+    do
+      local keys = keysFor(scr)
+      local f = focus[scr] or 1
+      if f > #keys then
+        local field = extraFocusTargets(scr)[f - #keys]
+        if field then toggleEditField(field) end
+        return true
       end
     end
     -- Rotary edit mode (pilot request, 2026-09): ENTER on MIN/SEC/BETS

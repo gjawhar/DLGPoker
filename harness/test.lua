@@ -1036,6 +1036,45 @@ core.startGame()
 check("(27) START works once a timer is picked", core.S.game ~= nil and core.S.screen == core.SCREEN.LIVE)
 model.createTimer = realCreate
 
+-- ---- Test 28: the model's FlightTime count-up timer is paused for the
+-- length of a game and restored afterwards (pilot request, 2026-09-14),
+-- with the original start condition persisted so a power-off mid-game
+-- can be undone at the next init.
+local ft = model.getTimer("FlightTime")
+ft:startCondition(alwaysOnSource)   -- stands in for the template's own launch condition
+core.S.game = nil
+core.S.screen = core.SCREEN.SETUP
+core.S.cfg.pausedTimerCat = nil; core.S.cfg.pausedTimerMember = nil
+core.startGame()
+check("(28) FlightTime paused (start condition ---) when a game starts",
+  ft:startCondition() and ft:startCondition():name() == "---", ft:startCondition() and ft:startCondition():name() or "nil")
+check("(28) original start condition persisted (cat/member)",
+  core.S.cfg.pausedTimerCat == 1 and core.S.cfg.pausedTimerMember == 0,
+  tostring(core.S.cfg.pausedTimerCat) .. "/" .. tostring(core.S.cfg.pausedTimerMember))
+check("(28) PokerTimer itself untouched by the pause", core.S.timerObj:name() ~= "FlightTime")
+core.onClose()
+check("(28) FlightTime restored on close", ft:startCondition() and ft:startCondition():name() == "Always on",
+  ft:startCondition() and ft:startCondition():name() or "nil")
+check("(28) persisted original cleared after restore", core.S.cfg.pausedTimerCat == nil and core.S.cfg.pausedTimerMember == nil)
+-- power-off mid-game: only the persisted values survive; init's restore path
+ft:startCondition(noneSource)
+core.S.cfg.pausedTimerCat = 1; core.S.cfg.pausedTimerMember = 0
+core.S.pausedTimer = nil
+core.resumeFlightTimer()
+check("(28) restored from persisted cat/member alone (power-off recovery)",
+  ft:startCondition() and ft:startCondition():name() == "Always on")
+-- disabled / missing: nothing happens, nothing crashes
+core.S.cfg.pauseTimerName = "NoSuchTimer"
+core.S.game = nil; core.S.screen = core.SCREEN.SETUP
+core.startGame()
+check("(28) unknown pause timer name is ignored", core.S.cfg.pausedTimerCat == nil and core.S.game ~= nil)
+core.onClose()
+core.S.cfg.pauseTimerName = ""
+core.S.game = nil; core.S.screen = core.SCREEN.SETUP
+core.startGame()
+check("(28) blank pause timer name disables the feature", core.S.cfg.pausedTimerCat == nil and core.S.game ~= nil)
+core.onClose()
+
 print("")
 if failures == 0 then print("ALL TESTS PASSED")
 else print(failures .. " TEST(S) FAILED") os.exit(1) end

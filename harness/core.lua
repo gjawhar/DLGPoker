@@ -163,6 +163,17 @@ local function defaults()
     -- created, and Timer3 is switched off. A pilot who had typed a
     -- custom name keeps it in config only until that first migration.
     timerName     = "PokerTimer",
+    -- Pilot request (2026-09-14): the DLG template's own "FlightTime"
+    -- count-up timer runs alongside every launch; during a Poker game it
+    -- just adds noise. Paused (start condition -> "---") for the game
+    -- and restored afterwards -- see pauseFlightTimer(). Blank disables;
+    -- a name that doesn't resolve is silently ignored.
+    pauseTimerName = "FlightTime",
+    -- Crash safety for the above: the paused timer's ORIGINAL start
+    -- condition (Source category/member) is persisted while a game is
+    -- running, so a power-off mid-game can still be undone at next init.
+    pausedTimerCat = nil,
+    pausedTimerMember = nil,
     landingSwitchName = "LANDING_MODE",   -- Lua-timed default (S6.4)
     landingMode   = "lua",                -- "lua" | "native" (LANDED_STABLE)
     -- 1.0s (pilot request, 2026-09, field test): a quick brake tap in
@@ -583,6 +594,56 @@ function core.dismissTimerNotice()
   S.timerNotice = nil
 end
 
+-- ---------------------------------------------------------------- FlightTime pause
+
+-- Pause the model's own flight-time timer for the duration of a game
+-- (pilot request, 2026-09-14): the DLG template's "FlightTime" counts
+-- up from every launch, which is noise while PokerTimer is counting
+-- down. Mechanism is the one the Timer Probe confirmed: set its start
+-- condition to the "---" Source, and put the ORIGINAL Source back
+-- afterwards. The original is remembered two ways -- the object for the
+-- normal in-session restore, and its category/member persisted in
+-- config so a power-off mid-game is undone at the next init (the same
+-- {category, member, options=0} lookup that returns the Always-on
+-- Source returns any Source). Missing timer, blank name, or an
+-- unreadable start condition: silently do nothing, both ways.
+local function pauseFlightTimer()
+  local name = S.cfg.pauseTimerName
+  if not name or name == "" or name == S.cfg.timerName then return end
+  local t = getTimerByName(name)
+  if not t then return end
+  local ok, cur = pcall(function() return t:startCondition() end)
+  if not ok or cur == nil or type(cur) == "number" then return end
+  local okC, cat = pcall(function() return cur:category() end)
+  local okM, mem = pcall(function() return cur:member() end)
+  if not (okC and okM and type(cat) == "number" and type(mem) == "number") then return end
+  local none = noneSource()
+  if not none then return end
+  if cat == (rawget(_G, "CATEGORY_NONE") or 0) then return end   -- already off; nothing to pause or restore
+  local okSet = pcall(function() t:startCondition(none) end)
+  if not okSet then return end
+  S.pausedTimer = t
+  S.cfg.pausedTimerCat = cat
+  S.cfg.pausedTimerMember = mem
+  core.saveConfig()
+end
+
+function core.resumeFlightTimer()
+  local cat, mem = S.cfg.pausedTimerCat, S.cfg.pausedTimerMember
+  if cat == nil or mem == nil then S.pausedTimer = nil return end
+  local t = S.pausedTimer or getTimerByName(S.cfg.pauseTimerName)
+  if t then
+    local ok, src = pcall(system.getSource, { category = cat, member = mem, options = 0 })
+    if ok and src ~= nil and type(src) ~= "number" then
+      pcall(function() t:startCondition(src) end)
+    end
+  end
+  S.pausedTimer = nil
+  S.cfg.pausedTimerCat = nil
+  S.cfg.pausedTimerMember = nil
+  core.saveConfig()
+end
+
 function core.pickerMove(d)
   local p = S.timerPicker
   if not p or #p.names == 0 then return end
@@ -760,6 +821,7 @@ function core.onClose()
   end
   timerSet(0)
   timerReset()
+  core.resumeFlightTimer()
 end
 
 -- ---------------------------------------------------------------- game lifecycle
@@ -794,6 +856,7 @@ function core.startGame()
   for i = 1, g.betCount do g.bets[i] = newBet(i) end
   S.game = g
   S.screen = SCREEN.LIVE
+  pauseFlightTimer()
 end
 
 local function currentBet()
@@ -928,6 +991,7 @@ local function finalizeGame()
   -- timer screen to clear.
   timerSet(0)
   timerReset()
+  core.resumeFlightTimer()
   S.screen = SCREEN.SUMMARY
 end
 
@@ -1435,6 +1499,10 @@ function core.init()
 
   ensureTimer()
   autoConfigTimer()
+  -- A game interrupted by a power-off never reached finalizeGame()/
+  -- onClose(): if a paused flight timer's original start condition is
+  -- still persisted, put it back now.
+  core.resumeFlightTimer()
 
   S.launchSrc  = getLogic("MOM_LAUNCH")
   S.zoomSrc    = getLogic("ZOOM_MODE")

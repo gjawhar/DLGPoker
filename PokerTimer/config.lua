@@ -101,6 +101,14 @@ function config.build()
   -- line is gone (GitHub #3, 2026-09-14): the app now sets the start
   -- condition itself with the real Always-on Source, confirmed counting
   -- on an X14. Countdown mode and start condition are both automatic.
+  -- Pilot request, 2026-09-14: the template's FlightTime count-up timer
+  -- is paused for the length of a game and restored afterwards. Blank
+  -- disables; a name that doesn't resolve is ignored.
+  line = panel:addLine("Pause during a game")
+  form.addTextField(line, nil,
+    function() return cfg().pauseTimerName or "" end,
+    function(v) cfg().pauseTimerName = v core.saveConfig() end)
+
   line = panel:addLine("Callouts")
   form.addStaticText(line, nil,
     "DLG Poker created its own timer, PokerTimer, with default callouts: " ..

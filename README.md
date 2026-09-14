@@ -102,7 +102,10 @@ voice announcements well.
   **"Use PokerTimer again"** to rename it back. In the rare case the
   model has no free timer slot, DLG Poker asks you to pick one of the
   existing timers instead (that one's callouts are left alone), and
-  remembers your choice.
+  remembers your choice. **Pause during a game** names a timer to pause
+  for the length of a game and restore afterwards — by default the DLG
+  template's `FlightTime` count-up, so it doesn't run alongside
+  PokerTimer; leave it blank to turn that off.
 - **Landing detection** — Lua-timed or native-logic-switch mode, which
   switch to watch, and a debounce threshold (1.0s by default) so a quick
   accidental brake tap mid-flight doesn't end a bet early.

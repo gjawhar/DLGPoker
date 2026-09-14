@@ -602,6 +602,41 @@ has resolves nil like the radio), Test 27 (createTimer fails → picker →
 FS4 commits, callouts untouched). Mock model seeds FlightTime/Timer2/
 Timer3 in slot order and enumerates them as Sources.
 
+**First X14 pass of the above (2026-09-14) produced two more changes:**
+- The notice/picker footer key is now always focused (`focus[SETUP] =
+  4` while either is up) — with focus left on slot 1 it looked
+  unreachable by wheel even though ENTER worked.
+- **Wheel walks into the value boxes on LIVE** (pilot request): focus on
+  the betting screen ranges over `#keysFor(LIVE) + #extraFocusTargets
+  (LIVE)` — footer keys first, then the MIN box, then the SEC box.
+  ENTER on a box calls `toggleEditField()` for that field, exactly as
+  ENTER on its footer key does (focus jumps to that footer key while
+  editing, which is what the self-heal in `screen.paint()` expects).
+  The boxes have three visual states: plain (`t.alt` fill), focused
+  (accent outline), editing (`t.accentBg` fill + outline). Touch tap
+  still registers via the same block.
+
+## FlightTime paused during a game (2026-09-14, core.lua + config.lua)
+
+The DLG template's "FlightTime" count-up timer runs from every launch —
+noise during a Poker game. `pauseFlightTimer()` (called at the end of
+`core.startGame()`) reads the timer named `cfg.pauseTimerName` (default
+`"FlightTime"`, Settings › Timer › "Pause during a game", blank
+disables), records its current start condition's category/member,
+persists them (`cfg.pausedTimerCat/Member`), and sets the `---` Source.
+`core.resumeFlightTimer()` — from `finalizeGame()`, `onClose()`, and
+`core.init()` (power-off-mid-game recovery) — re-obtains the original
+via `system.getSource({category, member, options = 0})` (the lookup
+form the probe confirmed for the Always-on Source) and puts it back,
+then clears the persisted pair. Missing/blank/unreadable → no-op both
+ways; a timer already at `---` is left alone. This closes the
+"Timer1 coexistence" known-open item below. **Restoring a *logic-
+switch* start condition through that lookup is the one part not yet
+seen on hardware** — FlightTime's real start condition on the template
+is a logic switch; the first game on the radio will show whether it
+comes back. Harness Test 28 covers pause / restore / power-off recovery
+/ unknown name / blank.
+
 ## Known-open items (as of last session)
 
 1. **Timer1 coexistence** — the pilot runs a separate Timer1 (count-up,
