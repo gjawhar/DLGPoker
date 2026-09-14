@@ -91,18 +91,45 @@ system.getSource({ category = 12, member = 0..3 })  -- FS1=0, FS2=1, FS3=2, FS4=
 replace with a symbolic constant unless Ethos ships one in a future version
 and you've re-confirmed it.
 
-**Timer3 setup — real hardware contradicts the simulator.**
-`t:direction(-1)` + `t:countingSource(nil)` (called "AUTOCFG" in the code and
-spec) was confirmed on an X20RS **simulator** to fully replace manually
-setting Countdown mode + Start condition = Always in `SYSTEM > TIMERS`. A
-later real X14 field report contradicted this: the countdown sets up
-correctly but **never actually starts** without the manual "Always" step.
-AUTOCFG is still called (harmless, probably still sets direction correctly)
-but is no longer trusted as sufficient on its own — DLG Poker's CONFIG
-screen states the manual step as required. See spec §6.3c. **Whether a real
-(non-simulator) X20RS behaves like the simulator or like the X14 is still
-unconfirmed** — that's the most likely next thing worth bench-testing if
-picking this up.
+**Timer setup — RESOLVED 2026-09-14 (GitHub #3), root cause found.**
+For a long time this read "real hardware contradicts the simulator":
+`t:direction(-1)` + `t:countingSource(nil)` ("AUTOCFG") worked on the
+26.1.1 simulator but on a real X14 the countdown never started, so the
+pilot had to set Start condition = Always by hand. Two things were wrong,
+both found by reading the official reference (classTimer.html) and then
+bench-testing with `probe/TimerProbe/` on the X14 (Ethos 26.1.2):
+
+1. The Timer class has TWO source properties. `countingSource()` is a
+   different setting (and only exists since 26.1.0 — on older firmware
+   the call threw and the pcall hid it). The SYSTEM > TIMERS "Start
+   condition" field is **`startCondition()`**, which AUTOCFG never set.
+2. The reference's example, `timer:startCondition(CATEGORY_ALWAYS_ON)`,
+   is wrong on 26.1.2: the bare constant throws *"bad argument #1
+   (Source expected; got number)"* — a pcall swallowed that too. A real
+   Source is required, and the ONLY lookup that returns it is the table
+   form: `system.getSource({ category = CATEGORY_ALWAYS_ON, member = 0,
+   options = 0 })` → a Source named "Always on" (cat 1, member 0).
+   `system.getSource(CATEGORY_ALWAYS_ON)` bare returns nil.
+
+`autoConfigTimer()` now does exactly that (`alwaysOnSource()`); the
+probe read `running() == true` and watched the value count 60 → 53 in
+8 s. The manual step is gone from README and config.lua. Also confirmed
+by the same probe: `system.getSource({category = CATEGORY_NONE, member =
+0, options = 0})` returns the "---" Source and stops a timer when set as
+its start condition; `model.createTimer()` works and the created timer
+survived an eject/reboot; timers enumerate as Sources via
+`{category = CATEGORY_TIMER, member = 0..9}` (empties named "---");
+audioActions entries are `{type, start, step, haptic}` with `start` =
+seconds remaining at which the action begins. Constants on 26.1.2:
+`CATEGORY_TIMER=21 CATEGORY_ALWAYS_ON=1 CATEGORY_NONE=0 COUNTDOWN_VALUE=0
+COUNTDOWN_BEEP=1 PLAY_FILE=2 PLAY_VALUE=3`. Logs: the radio's
+`scripts/TimerProbe/Files/timer_probe_run{1,2}.csv`.
+
+**Probe-tool gotcha**: a tool script must `return { init = fn }` and let
+Ethos call `init()` — registering at load time and returning nothing
+logs *"main.luac should return a table"* (the warning triangle on the
+Info screen). TimerProbe v1/v2 did that; v3 and PokerTimer/main.lua do
+it right.
 
 **`system.registerSystemTool` needs an icon mask or it silently never
 appears** in the System menu, with no error anywhere. Always pass

@@ -98,11 +98,12 @@ voice announcements well.
   default name, a **"Use Timer3 again"** button renames the *currently
   resolved* timer back to `Timer3` for you (only after Target timer
   actually resolves first — it can't guess which timer you mean without
-  that). **One-time manual setup required regardless:** in
-  `SYSTEM > TIMERS`, set that timer's Start condition to **Always**.
-  Confirmed on real X14 hardware — without this, DLG Poker sets the
-  countdown up correctly but it never actually starts. DLG Poker never
-  touches that timer's own countdown/alert beeps, only its duration.
+  that). No manual timer setup is needed: DLG Poker sets the timer to
+  count down and to start on its own ("Always") each time it opens —
+  confirmed on a real X14. DLG Poker never touches that timer's own
+  countdown/alert beeps, only its duration and start condition — set
+  your callouts (e.g. every 30 s, and a final 10 s countdown) on that
+  timer in `SYSTEM > TIMERS` however you like.
 - **Landing detection** — Lua-timed or native-logic-switch mode, which
   switch to watch, and a debounce threshold (1.0s by default) so a quick
   accidental brake tap mid-flight doesn't end a bet early.

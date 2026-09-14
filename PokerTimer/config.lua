@@ -97,14 +97,10 @@ function config.build()
     return true
   end })
 
-  line = panel:addLine("REQUIRED one-time setup")
-  form.addStaticText(line, nil,
-    "In SYSTEM > TIMERS, set this timer's Start condition to Always. " ..
-    "Confirmed on real hardware: without this, the countdown is set up " ..
-    "correctly but never actually starts counting down. The app attempts " ..
-    "this automatically, but that alone was not sufficient on a real radio " ..
-    "even though it worked in the simulator -- this manual step is the " ..
-    "one that's actually confirmed necessary.")
+  -- The former "REQUIRED one-time setup: set Start condition to Always"
+  -- line is gone (GitHub #3, 2026-09-14): the app now sets the start
+  -- condition itself with the real Always-on Source, confirmed counting
+  -- on an X14. Countdown mode and start condition are both automatic.
   line = panel:addLine("Note")
   form.addStaticText(line, nil,
     "Set countdown and alert beeps for this timer in SYSTEM > TIMERS -- " ..
