@@ -18,7 +18,7 @@
 --     confirmed, not assumed
 
 local core = {}
-core.VERSION = "0.2"
+core.VERSION = "1.0.1"
 
 -- ---------------------------------------------------------------- constants
 
@@ -328,13 +328,12 @@ end
 -- FS1-FS4 are members 0-3 of that same numeric category (pattern
 -- confirmed via Poker Probe, spec S11).
 --
--- This numeric literal is inherently fragile -- it is not from any FrSky
--- documentation and could differ on another Ethos build or radio family.
--- It is tried FIRST, since it is now the only approach confirmed to
--- actually work, with the originally-documented (but never-working)
--- attempts kept as a fallback in case a future Ethos version exposes a
--- proper name or constant for this category instead.
-local FS_CATEGORY_NUMERIC = 12
+-- Ethos 26.x names this category CATEGORY_FUNCTION_SWITCH (confirmed equal
+-- to 12 by the Dial In probe); the literal stays as the fallback for
+-- firmware without the constant. Tried FIRST, since it is the only
+-- approach confirmed to work, with the originally-documented (but
+-- never-working) attempts kept as a further fallback.
+local FS_CATEGORY_NUMERIC = rawget(_G, "CATEGORY_FUNCTION_SWITCH") or 12
 
 local function resolveSwitchByName(name)
   if not name or name == "" then return nil end
@@ -373,13 +372,33 @@ local function resolveTimer()
   if ok and t then S.timerObj = t else S.timerObj = nil end
 end
 
--- Idempotent -- safe to call every init, not just the first. Confirmed on
--- the X20RS simulator (S6.3b) to fully replace the manual "set Countdown
--- mode, set Start condition to Always" steps a pilot would otherwise have
--- to do by hand in SYSTEM > TIMERS.
+-- Idempotent -- safe to call every init, not just the first.
+--
+-- Re-examined 2026-09-13 against the official Ethos Lua reference
+-- (classTimer.html) after the "works in the simulator, never actually
+-- starts counting on real hardware" divergence that forced the manual
+-- SYSTEM > TIMERS "Start condition: Always" step documented in README.
+-- The Timer class has TWO separate source properties, and this function
+-- had only ever set the wrong one:
+--   timer:startCondition(source)  -- "the start condition of the timer",
+--                                    official example is literally
+--                                    timer:startCondition(CATEGORY_ALWAYS_ON),
+--                                    available since 1.1.0. THIS is the
+--                                    "Start condition: Always" setting.
+--   timer:countingSource(source)  -- a different property, and only
+--                                    available since firmware 26.1.0.
+-- So on the 26.1.1 simulator countingSource(nil) existed and the sim's
+-- default start condition happened to already count; on older-firmware
+-- hardware the countingSource call threw (silently swallowed by pcall)
+-- and startCondition was never set by anything -- hence the manual step.
+-- Passing the bare CATEGORY_ALWAYS_ON constant matches the official
+-- example verbatim. Still pcall-wrapped like every other native call.
+-- The manual README step stays documented until this is confirmed on
+-- real hardware (see GitHub issue #3).
 local function autoConfigTimer()
   if not S.timerObj then return end
   pcall(function() S.timerObj:direction(-1) end)
+  pcall(function() S.timerObj:startCondition(CATEGORY_ALWAYS_ON) end)
   pcall(function() S.timerObj:countingSource(nil) end)
   S.timerAutoDone = true
 end

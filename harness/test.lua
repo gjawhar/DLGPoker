@@ -15,6 +15,9 @@ os.time = function() return math.floor(fakeClock) end
 local function tick(seconds) fakeClock = fakeClock + seconds end
 
 CATEGORY_LOGIC_SWITCH = "logic"
+CATEGORY_ALWAYS_ON = "always_on"   -- bare constant, passed straight to
+                                    -- timer:startCondition() per the
+                                    -- official Ethos Lua reference example
 
 local sourceValues = {}
 local function setSrc(name, v) sourceValues[name] = v end
@@ -50,6 +53,8 @@ local function makeTimer(name)
     reset = function(self) t._value = t._start t._lastTick = fakeClock end,
     direction = function(self, ...) if select("#", ...) == 0 then return t._dir else t._dir = ... end end,
     countingSource = function(self, ...) if select("#", ...) == 0 then return t._cs else t._cs = ... end end,
+    -- Separate from countingSource -- see autoConfigTimer() in core.lua.
+    startCondition = function(self, ...) if select("#", ...) == 0 then return t._start_cond else t._start_cond = ... end end,
     -- Get/set the timer's name -- real Ethos API, confirmed via the
     -- official Lua reference (timer:name("New Name") renames it).
     name = function(self, ...) if select("#", ...) == 0 then return t._name else t._name = ... end end,
@@ -99,6 +104,10 @@ core.S.wakeupRate = RATE   -- pin calibration to a known value for this
 check("init resolves timer", core.S.timerObj ~= nil)
 check("timer autoconfigured to countdown", core.S.timerObj:direction() == -1)
 check("timer countingSource cleared", core.S.timerObj:countingSource() == nil)
+-- The one that actually matters on real hardware (2026-09-13 re-read of
+-- the official reference): Start condition, not countingSource.
+check("timer startCondition set to ALWAYS_ON", core.S.timerObj:startCondition() == CATEGORY_ALWAYS_ON,
+  tostring(core.S.timerObj:startCondition()))
 
 -- Defect 1: FS1-FS4 must resolve as DEFAULTS with no manual wiring at
 -- all -- core.init() should already have called resolveSwitches() against
