@@ -91,6 +91,15 @@ local S = {
   -- see that function's own comment.
   suppressNextAutoConfirm = false,
 
+  -- Set by ensureTimer() (GitHub #2). timerNotice = { created = true,
+  -- switchedOff = "<old timer name>" | nil } drives the one-time
+  -- "PokerTimer created" screen; timerPicker = { names = {...}, sel = n }
+  -- drives the blocking picker when a timer could not be created.
+  -- screen.lua reads both via core.S; nothing else on SETUP works while
+  -- either is set (see core.startGame()).
+  timerNotice = nil,
+  timerPicker = nil,
+
   -- game = nil until START; see startGame()
   game = nil,
 
@@ -146,7 +155,14 @@ local function defaults()
   return {
     windowDefault = 600,     -- 10:00
     betsDefault   = 3,
-    timerName     = "Timer3",
+    -- "PokerTimer" (GitHub #2, 2026-09-14): the app now creates and owns
+    -- its own timer rather than borrowing Timer3 -- see ensureTimer().
+    -- Existing radios migrate automatically: the old default was never
+    -- persisted (saveConfig() only writes departures from defaults), so
+    -- an upgraded install reads this new default, PokerTimer gets
+    -- created, and Timer3 is switched off. A pilot who had typed a
+    -- custom name keeps it in config only until that first migration.
+    timerName     = "PokerTimer",
     landingSwitchName = "LANDING_MODE",   -- Lua-timed default (S6.4)
     landingMode   = "lua",                -- "lua" | "native" (LANDED_STABLE)
     -- 1.0s (pilot request, 2026-09, field test): a quick brake tap in
@@ -435,15 +451,165 @@ local function setTimerRunning(run)
   if src then pcall(function() S.timerObj:startCondition(src) end) end
 end
 
+-- Idle configuration: countdown direction, switched OFF ("---"), value 0.
+-- The timer is only switched to Always on by timerSet(n > 0), i.e. the
+-- moment a bet arms (GitHub #1 hardware finding: an Always-on countdown
+-- never sits still, so it must be off whenever nothing is being timed --
+-- including right here at init, which used to set Always on and leave
+-- the timer counting negative under the Setup screen).
 local function autoConfigTimer()
   if not S.timerObj then return end
   pcall(function() S.timerObj:direction(-1) end)
-  local always = alwaysOnSource()
-  if always then
-    pcall(function() S.timerObj:startCondition(always) end)
-  end
   pcall(function() S.timerObj:countingSource(nil) end)
+  pcall(function() S.timerObj:start(0) end)
+  setTimerRunning(false)
+  pcall(function() S.timerObj:reset() end)
   S.timerAutoDone = true
+end
+
+-- ---------------------------------------------------------------- PokerTimer (GitHub #2)
+
+local POKER_TIMER_NAME = "PokerTimer"
+
+-- The pilot's requested default callouts, in the format read back from a
+-- real timer on the X14 (2026-09-14): `start` = seconds remaining at
+-- which the entry begins, `step` = interval. Confirmed by ear: PLAY_VALUE
+-- speaks the remaining time every 30 s; COUNTDOWN_VALUE speaks 10..1.
+-- Constants exist on 26.1.2 (PLAY_VALUE=3, COUNTDOWN_VALUE=0); the
+-- literals are only a fallback for a firmware without them. Set exactly
+-- once, at creation -- never rewritten, so whatever the pilot changes in
+-- SYSTEM > TIMERS afterwards stays theirs.
+local function defaultAudioActions()
+  return {
+    { type = rawget(_G, "PLAY_VALUE") or 3,      start = 3600, step = 30, haptic = 0 },
+    { type = rawget(_G, "COUNTDOWN_VALUE") or 0, start = 10,   step = 1,  haptic = 0 },
+  }
+end
+
+local function getTimerByName(name)
+  if not name or name == "" then return nil end
+  local ok, t = pcall(model.getTimer, name)
+  if ok and t then return t end
+  return nil
+end
+
+-- Every timer slot on the model, by name, via the Source enumeration the
+-- probe confirmed (CATEGORY_TIMER, members 0..9; empty slots are named
+-- "---"). Deliberately NOT model.getTimer(index) -- bench-found
+-- unreliable past index 1 (Poker Probe, S6.3a).
+local function enumerateTimerNames()
+  local names = {}
+  local cat = rawget(_G, "CATEGORY_TIMER")
+  if not cat then return names end
+  for i = 0, 9 do
+    local ok, src = pcall(system.getSource, { category = cat, member = i, options = 0 })
+    if ok and src ~= nil and type(src) ~= "number" then
+      local okN, n = pcall(function() return src:name() end)
+      if okN and type(n) == "string" and n ~= "---" and n ~= "" and n ~= POKER_TIMER_NAME then
+        names[#names + 1] = n
+      end
+    end
+  end
+  return names
+end
+
+-- Pilot's design (GitHub #2, decided 2026-09-13): on launch, use the
+-- timer named "PokerTimer"; if it doesn't exist, CREATE it -- even when a
+-- Timer3 exists -- configure it (countdown, default callouts, off until
+-- a bet arms), switch the timer the app used to drive OFF so it stops
+-- running in the background, and show a one-time screen saying so. If
+-- creation fails (no free slot, or an API failure), fall back to a
+-- blocking picker of the model's existing timers.
+--
+-- Migration detail: the old default "Timer3" was never written to
+-- config (only non-default values are), so an upgraded radio's config
+-- reads the NEW default here and can't tell us it used to be Timer3. The
+-- explicit "Timer3" candidate covers that; a custom saved name (still in
+-- config at this point) covers the rest. Only done at creation time --
+-- a one-shot -- so a Timer3 the pilot later repurposes is never touched
+-- again.
+local function ensureTimer()
+  local previous = S.cfg.timerName
+  local t = getTimerByName(POKER_TIMER_NAME)
+  if t then
+    S.timerObj = t
+    if previous ~= POKER_TIMER_NAME then
+      S.cfg.timerName = POKER_TIMER_NAME
+      core.saveConfig()
+    end
+    return
+  end
+
+  local ok, created = pcall(model.createTimer)
+  if ok and created then
+    pcall(function() created:name(POKER_TIMER_NAME) end)
+    pcall(function() created:direction(-1) end)
+    pcall(function() created:start(0) end)
+    pcall(function() created:audioActions(defaultAudioActions()) end)
+    S.timerObj = created
+    local switchedOff = nil
+    local seen = {}
+    for _, old in ipairs({ previous, "Timer3" }) do
+      if old and old ~= POKER_TIMER_NAME and not seen[old] then
+        seen[old] = true
+        local oldT = getTimerByName(old)
+        if oldT then
+          local none = noneSource()
+          if none then
+            local okOff = pcall(function() oldT:startCondition(none) end)
+            if okOff then switchedOff = switchedOff or old end
+          end
+        end
+      end
+    end
+    S.cfg.timerName = POKER_TIMER_NAME
+    core.saveConfig()
+    S.timerNotice = { created = true, switchedOff = switchedOff }
+    return
+  end
+
+  -- Could not create: block START until the pilot picks an existing timer.
+  S.timerObj = nil
+  S.timerPicker = { names = enumerateTimerNames(), sel = 1 }
+end
+
+-- Exposed for the harness (re-running the bootstrap against a
+-- manipulated model) -- init() is the only production caller.
+function core.ensureTimer()
+  ensureTimer()
+end
+
+function core.dismissTimerNotice()
+  S.timerNotice = nil
+end
+
+function core.pickerMove(d)
+  local p = S.timerPicker
+  if not p or #p.names == 0 then return end
+  p.sel = ((p.sel - 1 + d) % #p.names) + 1
+end
+
+function core.pickerSelect(i)
+  local p = S.timerPicker
+  if p and p.names[i] then p.sel = i end
+end
+
+-- Commit the highlighted timer: saved to config (remembered next
+-- launch), resolved, configured for countdown/off -- but its callouts
+-- are left exactly as they are: it wasn't ours.
+function core.pickTimer()
+  local p = S.timerPicker
+  if not p then return false end
+  local name = p.names[p.sel]
+  if not name then return false end
+  local t = getTimerByName(name)
+  if not t then return false end
+  S.cfg.timerName = name
+  core.saveConfig()
+  S.timerObj = t
+  S.timerPicker = nil
+  autoConfigTimer()
+  return true
 end
 
 -- The one call that matters (S6.2): set the duration, then reset. Called
@@ -603,6 +769,15 @@ local function newBet(idx)
 end
 
 function core.startGame()
+  -- GitHub #2: while the one-time "PokerTimer created" screen is up, the
+  -- START key / FS4 / a throw means CONTINUE, nothing more (pilot: the
+  -- screen must be dismissed first). While the picker is up, the same
+  -- inputs commit the highlighted timer. With no timer at all, START is
+  -- refused outright -- previously it let a game run in which every
+  -- landing scored as a bust.
+  if S.timerNotice then S.timerNotice = nil return end
+  if S.timerPicker then core.pickTimer() return end
+  if core.timerMissing() then core.setStatus("no timer - pick one in Settings first") return end
   local g = {
     startTs   = os.time(),
     deadline  = os.time() + S.setupWindow,
@@ -1258,7 +1433,7 @@ function core.init()
   if not S.dir then S.ioError = "no writable Files/ folder" end
   loadConfig()
 
-  resolveTimer()
+  ensureTimer()
   autoConfigTimer()
 
   S.launchSrc  = getLogic("MOM_LAUNCH")

@@ -101,10 +101,12 @@ function config.build()
   -- line is gone (GitHub #3, 2026-09-14): the app now sets the start
   -- condition itself with the real Always-on Source, confirmed counting
   -- on an X14. Countdown mode and start condition are both automatic.
-  line = panel:addLine("Note")
+  line = panel:addLine("Callouts")
   form.addStaticText(line, nil,
-    "Set countdown and alert beeps for this timer in SYSTEM > TIMERS -- " ..
-    "DLG Poker never touches those, only the duration (spec S6.2).")
+    "DLG Poker created its own timer, PokerTimer, with default callouts: " ..
+    "the time every 30 s, then a 10 s countdown. Change them any way you " ..
+    "like in SYSTEM > TIMERS > PokerTimer -- DLG Poker only ever sets the " ..
+    "duration and whether it's running, never the callouts.")
 
   panel = form.addExpansionPanel("Landing detection")
   line = panel:addLine("Mode")

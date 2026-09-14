@@ -552,6 +552,56 @@ from there resolves as a nil global. Syntax-checked clean, failed only
 at runtime, caught by Test 26 on its first run. Same class of bug as the
 draw.lua incident in [[reference_lua_testing_via_lupa]].
 
+## PokerTimer bootstrap (2026-09-14, GitHub #2, core.lua + screen.lua + config.lua)
+
+The app owns its timer now. `ensureTimer()` runs once in `core.init()`:
+
+1. `model.getTimer("PokerTimer")` — found: use it, done (also rewrites
+   `cfg.timerName` if it pointed elsewhere).
+2. Not found: `model.createTimer()` → `name("PokerTimer")`,
+   `direction(-1)`, `start(0)`, `audioActions(defaultAudioActions())`
+   (the two entries the pilot heard on the X14: `PLAY_VALUE start=3600
+   step=30` and `COUNTDOWN_VALUE start=10 step=1`, `haptic=0`). Then
+   **switches the old timer off** — the saved `cfg.timerName` if it was
+   something else, and always `"Timer3"` (the old default was never
+   persisted, so an upgraded config can't tell us it used it) — by
+   setting `startCondition(noneSource())` on it. One-shot: only at
+   creation, so a Timer3 the pilot later repurposes is never touched
+   again. Persists `cfg.timerName = "PokerTimer"` and sets
+   `S.timerNotice = { created = true, switchedOff = "<name>" | nil }`.
+3. `createTimer()` failed (nil/error): `S.timerObj = nil`,
+   `S.timerPicker = { names = enumerateTimerNames(), sel = 1 }` — names
+   come from `system.getSource({category = CATEGORY_TIMER, member =
+   0..9, options = 0})`, skipping `"---"` (empty slots) and PokerTimer.
+
+`autoConfigTimer()` then sets the IDLE state on whatever `S.timerObj`
+is: countdown, `start(0)`, start condition `---`, reset. It no longer
+sets Always on — `timerSet(n > 0)` does that when a bet arms (see the
+"Timer is zeroed on every exit path" section: an Always-on countdown
+never sits still).
+
+**screen.lua**: while `core.S.timerNotice` is set, `paintSetup` draws
+the one-time screen (`paintTimerNotice`, per the "PokerTimer First-Run
+Screen" mockup) and `keysFor(SETUP)` is `{"-","-","-","CONTINUE"}`;
+while `core.S.timerPicker` is set, `paintTimerPicker` + `{"-","-","-",
+"USE THIS"}` (rotary moves the highlight, a tap on a row selects it, up
+to 4 rows windowed around the highlight, each row shows the timer's
+direction and start condition). `core.startGame()` is the FS4/START
+funnel for both: notice up → dismiss only; picker up → `pickTimer()`
+only; no timer → refused with a status line. ENTER = key 4 regardless of
+focus; RTN dismisses the notice but falls through (leaves the tool) on
+the picker. Every text height on both screens is measured, never
+assumed. `core.pickTimer()` persists the name, resolves it, and runs
+`autoConfigTimer()` — it deliberately does NOT touch that timer's
+callouts.
+
+Harness: Test 1 (fresh model → created/configured/Timer3 off/notice/
+START-dismisses/idempotent), Test 25 (rename flows, now against
+PokerTimer, with no lazy timer creation in the mock — a name no timer
+has resolves nil like the radio), Test 27 (createTimer fails → picker →
+FS4 commits, callouts untouched). Mock model seeds FlightTime/Timer2/
+Timer3 in slot order and enumerates them as Sources.
+
 ## Known-open items (as of last session)
 
 1. **Timer1 coexistence** — the pilot runs a separate Timer1 (count-up,

@@ -15,7 +15,9 @@ os.time = function() return math.floor(fakeClock) end
 local function tick(seconds) fakeClock = fakeClock + seconds end
 
 CATEGORY_LOGIC_SWITCH = "logic"
-CATEGORY_ALWAYS_ON = 1   -- real value on 26.1.2 (Timer Probe run 1)
+CATEGORY_ALWAYS_ON = 1   -- real values on 26.1.2 (Timer Probe run 1)
+CATEGORY_TIMER = 21
+COUNTDOWN_VALUE, COUNTDOWN_BEEP, PLAY_FILE, PLAY_VALUE = 0, 1, 2, 3
 
 local sourceValues = {}
 local function setSrc(name, v) sourceValues[name] = v end
@@ -34,11 +36,23 @@ local alwaysOnSource = { name = function() return "Always on" end, category = fu
 -- The "---" Source (no start condition), same real readback shape.
 CATEGORY_NONE = 0
 local noneSource = { name = function() return "---" end, category = function() return 0 end, member = function() return 0 end }
+-- Declared BEFORE `system` so getSource's closure captures these locals
+-- -- defined below it they'd resolve as nil globals (the exact scope trap
+-- this project keeps documenting; it bit this file too, 2026-09-14).
+local fakeTimers = {}
+-- Timer enumeration as Sources (probe-confirmed): members 0..9, empty
+-- slots named "---".
+local function timerSourceForMember(m)
+  local t = fakeTimers[m + 1]
+  local n = t and t:name() or "---"
+  return { name = function() return n end, category = function() return CATEGORY_TIMER end, member = function() return m end }
+end
 system = {
   getSource = function(spec)
     if type(spec) ~= "table" then return nil end
     if spec.category == CATEGORY_ALWAYS_ON and spec.member == 0 then return alwaysOnSource end
     if spec.category == CATEGORY_NONE and spec.member == 0 then return noneSource end
+    if spec.category == CATEGORY_TIMER and spec.member and spec.member >= 0 and spec.member <= 9 then return timerSourceForMember(spec.member) end
     if spec.name then return makeSource(spec.name) end
     return nil
   end,
@@ -50,7 +64,6 @@ system = {
 -- countingSource(nil) to mean "set to nil", bench-confirmed as a real
 -- setter call on hardware in Poker Probe; a value-based check cannot tell
 -- that apart from a no-argument getter call.
-local fakeTimers = {}
 local function makeTimer(name)
   local t = { _start = 0, _value = 0, _dir = 1, _cs = "unset", _lastTick = fakeClock, _name = name }
   return {
@@ -76,24 +89,37 @@ local function makeTimer(name)
     -- Get/set the timer's name -- real Ethos API, confirmed via the
     -- official Lua reference (timer:name("New Name") renames it).
     name = function(self, ...) if select("#", ...) == 0 then return t._name else t._name = ... end end,
+    -- Real format (X14 readback): a list of {type, start, step, haptic}.
+    audioActions = function(self, ...) if select("#", ...) == 0 then return t._aa or {} else t._aa = ... end end,
   }
 end
 -- Names in here fail to resolve, simulating "this timer got renamed away
 -- and nothing is registered under the old name anymore" -- used to test
 -- core.timerMissing()/resolveTimerNow() without needing real hardware.
 local deniedTimerNames = {}
-model = { getTimer = function(name)
-  if deniedTimerNames[name] then return nil end
-  -- Search by CURRENT name first, so a timer renamed via :name() is
-  -- still found under its new name (matching real Ethos behavior),
-  -- falling back to lazy creation keyed by the requested name.
-  for _, existing in pairs(fakeTimers) do
-    local ok, curName = pcall(function() return existing:name() end)
-    if ok and curName == name then return existing end
-  end
-  if not fakeTimers[name] then fakeTimers[name] = makeTimer(name) end
-  return fakeTimers[name]
-end }
+-- The model starts with the timers a real radio had (X14, 2026-09-14):
+-- FlightTime, Timer2, Timer3 -- in slot order, for the CATEGORY_TIMER
+-- enumeration below. No lazy creation any more (GitHub #2): a name that
+-- no timer currently has resolves to nil, exactly like the radio, and
+-- model.createTimer() is the only way a new one appears.
+fakeTimers[1] = makeTimer("FlightTime")
+fakeTimers[2] = makeTimer("Timer2")
+fakeTimers[3] = makeTimer("Timer3")
+model = {
+  getTimer = function(name)
+    if deniedTimerNames[name] then return nil end
+    for _, existing in ipairs(fakeTimers) do
+      local ok, curName = pcall(function() return existing:name() end)
+      if ok and curName == name then return existing end
+    end
+    return nil
+  end,
+  createTimer = function()
+    local t = makeTimer("---")
+    fakeTimers[#fakeTimers + 1] = t
+    return t
+  end,
+}
 
 local core = dofile("core.lua")
 
@@ -119,15 +145,39 @@ core.init()
 core.S.wakeupRate = RATE   -- pin calibration to a known value for this
                             -- test run rather than waiting 3s for it to
                             -- self-calibrate through simulated time
+-- ---- Test 1: PokerTimer bootstrap (GitHub #2). The model had only
+-- FlightTime/Timer2/Timer3, so init must CREATE PokerTimer, configure it,
+-- switch Timer3 off (the app's old default), persist the name, and queue
+-- the one-time notice screen.
 check("init resolves timer", core.S.timerObj ~= nil)
+check("init created a timer named PokerTimer", core.S.timerObj:name() == "PokerTimer", tostring(core.S.timerObj:name()))
+check("PokerTimer resolves by name afterwards", model.getTimer("PokerTimer") == core.S.timerObj)
 check("timer autoconfigured to countdown", core.S.timerObj:direction() == -1)
 check("timer countingSource cleared", core.S.timerObj:countingSource() == nil)
--- The one that actually matters on real hardware (2026-09-13 re-read of
--- the official reference): Start condition, not countingSource.
+-- Idle at init: OFF and zero. Always on is only ever set by timerSet(n>0)
+-- when a bet arms (GitHub #1 hardware finding).
 local sc = core.S.timerObj:startCondition()
-check("timer startCondition set to the Always-on SOURCE (not the bare constant)",
-  type(sc) == "table" and sc:name() == "Always on" and sc:category() == CATEGORY_ALWAYS_ON,
-  tostring(sc))
+check("timer is switched OFF at init (start condition ---), not Always on",
+  type(sc) == "table" and sc:name() == "---", sc and sc:name() or "nil")
+local aa = core.S.timerObj:audioActions()
+check("default callouts set at creation: 2 entries", type(aa) == "table" and #aa == 2, tostring(aa and #aa))
+check("callout 1 = PLAY_VALUE every 30 s", aa[1] and aa[1].type == PLAY_VALUE and aa[1].step == 30)
+check("callout 2 = COUNTDOWN_VALUE from 10 s, step 1", aa[2] and aa[2].type == COUNTDOWN_VALUE and aa[2].start == 10 and aa[2].step == 1)
+local t3sc = model.getTimer("Timer3"):startCondition()
+check("old Timer3 switched OFF at migration", type(t3sc) == "table" and t3sc:name() == "---", t3sc and t3sc:name() or "nil")
+check("config now points at PokerTimer", core.S.cfg.timerName == "PokerTimer", tostring(core.S.cfg.timerName))
+check("one-time notice queued, naming the switched-off timer",
+  core.S.timerNotice ~= nil and core.S.timerNotice.created == true and core.S.timerNotice.switchedOff == "Timer3",
+  core.S.timerNotice and tostring(core.S.timerNotice.switchedOff) or "nil")
+-- START while the notice is up only dismisses it (pilot: the screen must
+-- be dismissed first); the next START actually starts.
+core.startGame()
+check("START with the notice up dismisses it and does NOT start a game", core.S.game == nil and core.S.timerNotice == nil)
+-- Re-running the bootstrap on a model that already has PokerTimer must
+-- be a no-op: nothing created, no notice, Timer3 untouched.
+local before = #fakeTimers
+core.ensureTimer()
+check("bootstrap is idempotent once PokerTimer exists", #fakeTimers == before and core.S.timerNotice == nil and core.S.timerPicker == nil)
 
 -- Defect 1: FS1-FS4 must resolve as DEFAULTS with no manual wiring at
 -- all -- core.init() should already have called resolveSwitches() against
@@ -856,43 +906,43 @@ check("a 0:00 throw does not count as an attempt", core.S.game.bets[1].attempts 
 -- timer, DLG Poker went silently dead -- see core.timerMissing()/
 -- resolveTimerNow()/renameTimerToDefault())
 
-check("not missing initially (Timer3 already resolved at init)",
+check("not missing initially (PokerTimer resolved at init)",
   core.timerMissing() == false)
 
--- Simulate the actual field report: the configured name stops resolving
-deniedTimerNames["Timer3"] = true
+-- Simulate the actual field report: the pilot renames the timer in Ethos.
+-- With no lazy creation in the mock (GitHub #2), the old name genuinely
+-- stops resolving, exactly like the radio.
+local pokerTimer = core.S.timerObj
+pokerTimer:name("Poker Timer")
 core.resolveTimerNow()
 check("timerMissing() true once the configured name no longer resolves",
   core.timerMissing() == true)
 
 -- The real recovery path: retype Target timer to the CURRENT actual name.
--- Also clears the deny-list entry for "Timer3" -- once a real timer is
--- renamed back to it below, that name genuinely resolves again, so the
--- mock needs to stop pretending nothing has that name anymore.
 core.S.cfg.timerName = "Poker Timer"
-deniedTimerNames["Timer3"] = nil
 core.resolveTimerNow()
 check("resolves again once pointed at the timer's real current name",
   core.timerMissing() == false)
 
 -- renameTimerToDefault() only acts on the already-resolved timer -- no
 -- index-guessing (Poker Probe already found index lookups unreliable
--- past index 1 on real hardware)
+-- past index 1 on real hardware). The default is PokerTimer now.
 local renamed = core.renameTimerToDefault()
 check("renameTimerToDefault() reports success", renamed == true)
-check("config points at the default name again", core.S.cfg.timerName == "Timer3",
+check("config points at the default name again", core.S.cfg.timerName == "PokerTimer",
   tostring(core.S.cfg.timerName))
+check("the timer itself is named PokerTimer again", pokerTimer:name() == "PokerTimer")
 check("still resolves after renaming back", core.timerMissing() == false)
 
 -- And the guard: no live timer to act on -> false, doesn't crash
-deniedTimerNames["Timer3"] = true
+deniedTimerNames["PokerTimer"] = true
 core.resolveTimerNow()
 check("timerMissing() true again (re-denied for this check)", core.timerMissing() == true)
 check("renameTimerToDefault() is a no-op with nothing resolved",
   core.renameTimerToDefault() == false)
 
 -- Leave state clean for anything after this point
-deniedTimerNames["Timer3"] = nil
+deniedTimerNames["PokerTimer"] = nil
 core.resolveTimerNow()
 check("cleaned up: resolves normally again", core.timerMissing() == false)
 
@@ -949,6 +999,42 @@ core.S.timerObj = nil
 local okClose = pcall(core.onClose)
 check("(26c) onClose is a safe no-op with no game and no timer", okClose == true)
 core.S.timerObj = savedTimer
+
+-- ---- Test 27: the picker (GitHub #2 failure path) -- PokerTimer absent
+-- AND createTimer() fails (no free slot). START must be blocked until
+-- the pilot picks an existing timer; the pick is persisted, resolved,
+-- and configured idle -- but that timer's callouts are left alone.
+core.S.game = nil
+core.S.screen = core.SCREEN.SETUP
+core.S.timerNotice = nil
+-- take PokerTimer off the model, and make creation fail
+for i = #fakeTimers, 1, -1 do if fakeTimers[i]:name() == "PokerTimer" then table.remove(fakeTimers, i) end end
+local realCreate = model.createTimer
+model.createTimer = function() return nil end
+core.S.cfg.timerName = "PokerTimer"
+core.S.timerObj = nil
+core.ensureTimer()
+check("(27) createTimer failing -> no timer, picker up", core.timerMissing() == true and core.S.timerPicker ~= nil)
+local names = core.S.timerPicker and table.concat(core.S.timerPicker.names, ",") or ""
+check("(27) picker lists the model's real timers, no empty slots, no PokerTimer",
+  names == "FlightTime,Timer2,Timer3", names)
+check("(27) no one-time notice in the failure path", core.S.timerNotice == nil)
+-- scroll to Timer3 (index 3); START / FS4 / ENTER is "USE THIS" while
+-- the picker is up: it commits the highlighted timer and does NOT start
+-- a game on that same press.
+core.pickerMove(2)
+check("(27) picker selection moved", core.S.timerPicker.sel == 3, tostring(core.S.timerPicker.sel))
+model.getTimer("Timer3"):audioActions({ { type = PLAY_VALUE, start = 600, step = 30, haptic = 1 } })
+core.startGame()
+check("(27) START with the picker up commits the pick, no game yet", core.S.game == nil and core.S.timerPicker == nil)
+check("(27) picker cleared, timer resolved", core.S.timerPicker == nil and core.timerMissing() == false)
+check("(27) choice persisted to config", core.S.cfg.timerName == "Timer3", tostring(core.S.cfg.timerName))
+local picked = core.S.timerObj
+check("(27) picked timer configured idle: countdown, OFF", picked ~= nil and picked:direction() == -1 and picked:startCondition() and picked:startCondition():name() == "---")
+check("(27) picked timer's own callouts left untouched", picked ~= nil and #picked:audioActions() == 1 and picked:audioActions()[1].start == 600)
+core.startGame()
+check("(27) START works once a timer is picked", core.S.game ~= nil and core.S.screen == core.SCREEN.LIVE)
+model.createTimer = realCreate
 
 print("")
 if failures == 0 then print("ALL TESTS PASSED")

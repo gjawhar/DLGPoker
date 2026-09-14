@@ -112,7 +112,14 @@ local logVisibleRows = 1
 -- ---------------------------------------------------------------- S1 setup
 
 local function keysFor(scr)
-  if scr == SCREEN.SETUP then return { "MIN", "SEC", "BETS", "START", "CONFIG" } end
+  if scr == SCREEN.SETUP then
+    -- GitHub #2: the one-time "PokerTimer created" screen and the timer
+    -- picker each own the whole footer -- one key, FS4-aligned, nothing
+    -- else reachable until it's pressed.
+    if core.S.timerNotice then return { "-", "-", "-", "CONTINUE" } end
+    if core.S.timerPicker then return { "-", "-", "-", "USE THIS" } end
+    return { "MIN", "SEC", "BETS", "START", "CONFIG" }
+  end
   if scr == SCREEN.LIVE then
     local g = core.S.game
     if g and g.armed then
@@ -167,10 +174,158 @@ local function registerEditTap(x, y, w, h, field)
   }
 end
 
+-- GitHub #2: the one-time screen shown the first time DLG Poker opens on
+-- a model with no PokerTimer -- the timer has already been created and
+-- configured by then; this just says so, names the default callouts, and
+-- points at where to change them. Layout per the approved mockup
+-- (artifact "PokerTimer First-Run Screen"): eyebrow, headline with the
+-- timer's name in accent (the one word the pilot has to find again in
+-- the system menu), two badges for the two facts they might want to
+-- change, a dotted section break, then the menu path. Dismiss is
+-- CONTINUE / ENTER / RTN; every text height is measured, never assumed
+-- (the X14's real fonts are taller than the simulator's).
+local function paintTimerNotice(w, h, t, notice)
+  local cy = CONTENT_TOP + 10
+  lcd.font(FONT_S)
+  local _, sH = lcd.getTextSize("0"); sH = (sH and sH > 0) and sH or 14
+  draw.color(t.dim2)
+  draw.text(12, cy, "ONE-TIME SETUP")
+  cy = cy + sH + 4
+
+  lcd.font(FONT_L)
+  local _, lH = lcd.getTextSize("0"); lH = (lH and lH > 0) and lH or 24
+  draw.color(t.txt)
+  local pre = "Timer "
+  draw.text(12, cy, pre)
+  local x = 12 + lcd.getTextSize(pre)
+  draw.color(t.accent)
+  draw.text(x, cy, "PokerTimer")
+  x = x + lcd.getTextSize("PokerTimer")
+  draw.color(t.txt)
+  draw.text(x, cy, " created")
+  cy = cy + lH + 6
+
+  lcd.font(FONT_S)
+  draw.color(t.txt)
+  draw.text(12, cy, "Added to this model as a countdown that starts on every launch.", w - 24)
+  cy = cy + sH + 8
+
+  local b1, b2 = "CALLS THE TIME EVERY 30 s", "10 s COUNTDOWN AT THE END"
+  local bw1, bh = draw.badgeSize(b1)
+  local bw2 = draw.badgeSize(b2)
+  draw.badge(12, cy, b1, t.accent, t.accentBg)
+  if 12 + bw1 + 8 + bw2 <= w - 12 then
+    draw.badge(12 + bw1 + 8, cy, b2, t.accent, t.accentBg)
+    cy = cy + bh + 10
+  else
+    cy = cy + bh + 4
+    draw.badge(12, cy, b2, t.accent, t.accentBg)
+    cy = cy + bh + 10
+  end
+
+  draw.dottedLine(12, cy, w - 24, t.marker)
+  cy = cy + 8
+
+  draw.color(t.dim)
+  draw.text(12, cy, "Want different callouts? SYSTEM > TIMERS > PokerTimer - change anything there.", w - 24)
+  cy = cy + sH + 2
+  draw.text(12, cy, "DLG Poker only ever sets its duration and whether it's running.", w - 24)
+  cy = cy + sH + 2
+  if notice.switchedOff then
+    draw.text(12, cy, tostring(notice.switchedOff) .. " has been switched off - it's no longer needed.", w - 24)
+  end
+
+  draw.color(t.dim)
+  draw.text(12, h - sH - 6, "You won't see this again on this model.", w - 24)
+end
+
+-- GitHub #2 failure path: PokerTimer couldn't be created (no free timer
+-- slot, or the API refused). START is blocked until an existing timer is
+-- chosen. Rows come from core's CATEGORY_TIMER enumeration; the second
+-- column shows each timer's current direction and start condition so a
+-- pilot can avoid grabbing one they rely on. Rotary moves the highlight,
+-- a tap on a row selects it, USE THIS / ENTER / FS4 commits.
+local function paintTimerPicker(w, h, t, picker)
+  local cy = CONTENT_TOP + 10
+  lcd.font(FONT_S)
+  local _, sH = lcd.getTextSize("0"); sH = (sH and sH > 0) and sH or 14
+  draw.color(t.dim2)
+  draw.text(12, cy, "TIMER NEEDED")
+  cy = cy + sH + 4
+
+  lcd.font(FONT_L)
+  local _, lH = lcd.getTextSize("0"); lH = (lH and lH > 0) and lH or 24
+  draw.color(t.txt)
+  draw.text(12, cy, "Couldn't create ")
+  draw.color(t.accent)
+  draw.text(12 + lcd.getTextSize("Couldn't create "), cy, "PokerTimer")
+  cy = cy + lH + 6
+
+  lcd.font(FONT_S)
+  local _, bh = draw.badgeSize("0")
+  if #picker.names == 0 then
+    draw.badge(12, cy, "NO TIMERS ON THIS MODEL - ADD ONE IN SYSTEM > TIMERS", t.bad, t.badBg, w - 24)
+    cy = cy + bh + 8
+    draw.color(t.txt)
+    draw.text(12, cy, "Then reopen DLG Poker.", w - 24)
+    return
+  end
+  draw.badge(12, cy, "THIS MODEL HAS NO FREE TIMER SLOT", t.bad, t.badBg, w - 24)
+  cy = cy + bh + 8
+
+  draw.color(t.txt)
+  draw.text(12, cy, "Pick an existing timer for DLG Poker to drive. Its callouts are left as they are.", w - 24)
+  cy = cy + sH + 8
+
+  -- Windowed list: up to 4 rows, keeping the highlight in view.
+  local rowH = sH + 10
+  local maxRows = math.max(1, math.floor((h - cy - sH - 12) / (rowH + 4)))
+  local first = math.max(1, math.min(picker.sel - maxRows + 1, #picker.names - maxRows + 1))
+  if first < 1 then first = 1 end
+  for i = first, math.min(#picker.names, first + maxRows - 1) do
+    local name = picker.names[i]
+    local info = ""
+    local okT, tm = pcall(model.getTimer, name)
+    if okT and tm then
+      local okD, d = pcall(function() return tm:direction() end)
+      local okS, sc = pcall(function() return tm:startCondition() end)
+      local okN, scn = pcall(function() return sc and sc:name() end)
+      local dirStr = (okD and d == -1) and "countdown" or "count up"
+      local scStr = (okN and scn and scn ~= "---") and ("starts: " .. tostring(scn)) or "off"
+      info = dirStr .. " - " .. scStr
+    end
+    draw.color(t.alt)
+    lcd.drawFilledRectangle(12, cy, w - 24, rowH)
+    if i == picker.sel then
+      draw.color(t.accent)
+      lcd.drawRectangle(12, cy, w - 24, rowH, 2)
+      draw.color(t.txt)
+    else
+      draw.color(t.dim2)
+    end
+    draw.text(20, cy + 5, name, (w - 24) * 0.5)
+    draw.color(t.dim)
+    local iw = lcd.getTextSize(info)
+    draw.text(w - 20 - iw, cy + 5, info, (w - 24) * 0.5)
+    if isTouchCapable() then
+      local idx = i
+      valueRects[#valueRects + 1] = { x = 12, y = cy, w = w - 24, h = rowH, action = function() core.pickerSelect(idx) end }
+    end
+    cy = cy + rowH + 4
+  end
+
+  draw.color(t.dim)
+  draw.text(12, h - sH - 6, "Scroll to choose - your choice is remembered.", w - 24)
+end
+
 local function paintSetup(w, h)
   local t = draw.theme()
   draw.chrome(w, "DLG Poker")
   draw.color(t.bg); lcd.drawFilledRectangle(0, CHROME_H, w, h - CHROME_H)
+
+  -- GitHub #2: these two own the whole screen while they're up.
+  if core.S.timerNotice then paintTimerNotice(w, h, t, core.S.timerNotice) return end
+  if core.S.timerPicker then paintTimerPicker(w, h, t, core.S.timerPicker) return end
 
   local cy = CONTENT_TOP + 18
   lcd.font(FONT_S)
@@ -891,7 +1046,9 @@ local function activate(scr, i)
   -- and allow me to adjust it using the scroll -- it does neither." Footer
   -- key and value are now just two tap targets for the identical action.
   if scr == SCREEN.SETUP then
-    if label == "MIN" then toggleEditField("min")
+    if label == "CONTINUE" then core.dismissTimerNotice()
+    elseif label == "USE THIS" then core.pickTimer()
+    elseif label == "MIN" then toggleEditField("min")
     elseif label == "SEC" then toggleEditField("sec")
     elseif label == "BETS" then toggleEditField("bets")
     elseif label == "START" then core.startGame()
@@ -963,6 +1120,13 @@ function screen.event(value, x, y, category)
     local n = math.abs(tonumber(x) or 1)
     if n < 1 then n = 1 end
     local d = (value == KEY_ROTARY_RIGHT) and n or -n
+    -- GitHub #2: the picker owns the rotary (moves the highlight); the
+    -- one-time notice has nothing to scroll to, so swallow it there.
+    if scr == SCREEN.SETUP and core.S.timerPicker then
+      core.pickerMove(d)
+      return true
+    end
+    if scr == SCREEN.SETUP and core.S.timerNotice then return true end
     if rotaryEditField then
       -- In edit mode: scroll bumps the field directly, same granularity
       -- (whole minutes / 10s / 1 bet) as the footer key and the touch
@@ -992,6 +1156,12 @@ function screen.event(value, x, y, category)
   if value == KEY_ENTER_BREAK then
     if rotaryEditField then
       rotaryEditField = nil   -- second ENTER leaves edit mode
+      return true
+    end
+    -- GitHub #2: ENTER on the one-time notice = CONTINUE; on the picker
+    -- = USE THIS. Both are the FS4-aligned key 4, regardless of focus.
+    if scr == SCREEN.SETUP and (core.S.timerNotice or core.S.timerPicker) then
+      activate(scr, 4)
       return true
     end
     -- LOG's ROTARY is fully dedicated to scrolling the list (see above),
@@ -1028,6 +1198,14 @@ function screen.event(value, x, y, category)
   if value == KEY_RTN_FIRST or value == KEY_EXIT_FIRST or value == 99 then
     if rotaryEditField then
       rotaryEditField = nil
+      return true
+    end
+    -- GitHub #2: RTN dismisses the one-time notice (same as CONTINUE --
+    -- the timer was created before the screen drew, nothing to undo).
+    -- On the picker it falls through and leaves the tool: with no timer
+    -- there is nothing to do here, and the picker comes back next open.
+    if scr == SCREEN.SETUP and core.S.timerNotice then
+      core.dismissTimerNotice()
       return true
     end
     if scr == SCREEN.LOG then core.S.screen = SCREEN.SUMMARY return true end

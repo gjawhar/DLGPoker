@@ -87,23 +87,22 @@ voice announcements well.
 ## Settings
 
 - **Game defaults** — working-time window length, bets per game.
-- **Timer** — which Ethos timer DLG Poker drives, found **by name**
-  (default `Timer3`). If you rename that timer in Ethos (e.g. to give it
-  a friendlier label for your own audio callouts), DLG Poker won't find
-  it anymore — you'll see a red **"TIMER NOT FOUND" warning** on the
-  Setup and Live screens until you fix it. To fix: open Settings → Timer
-  and retype **Target timer** to the timer's new actual name (this now
-  takes effect immediately, no restart needed) — a **Status** line right
-  below confirms once it resolves. If you'd rather have it back under the
-  default name, a **"Use Timer3 again"** button renames the *currently
-  resolved* timer back to `Timer3` for you (only after Target timer
-  actually resolves first — it can't guess which timer you mean without
-  that). No manual timer setup is needed: DLG Poker sets the timer to
-  count down and to start on its own ("Always") each time it opens —
-  confirmed on a real X14. DLG Poker never touches that timer's own
-  countdown/alert beeps, only its duration and start condition — set
-  your callouts (e.g. every 30 s, and a final 10 s countdown) on that
-  timer in `SYSTEM > TIMERS` however you like.
+- **Timer** — DLG Poker drives its own Ethos timer, **`PokerTimer`**,
+  and sets it up for you. The first time you open the tool on a model
+  that doesn't have one, it creates it — countdown, started and stopped
+  by the app itself, with default callouts of **the remaining time every
+  30 seconds and a spoken 10-second countdown at the end** — switches
+  off the timer it used to drive (`Timer3`, if you had one), and shows a
+  one-time screen saying so. Press CONTINUE and play. The timer is a
+  normal model timer: open `SYSTEM > TIMERS > PokerTimer` to change the
+  callouts (or anything else) to taste; DLG Poker only ever sets its
+  duration and whether it's running, never the callouts. If you rename
+  it, DLG Poker will create a fresh `PokerTimer` next time — so retype
+  **Target timer** in Settings → Timer to the new name instead, or press
+  **"Use PokerTimer again"** to rename it back. In the rare case the
+  model has no free timer slot, DLG Poker asks you to pick one of the
+  existing timers instead (that one's callouts are left alone), and
+  remembers your choice.
 - **Landing detection** — Lua-timed or native-logic-switch mode, which
   switch to watch, and a debounce threshold (1.0s by default) so a quick
   accidental brake tap mid-flight doesn't end a bet early.
