@@ -395,10 +395,30 @@ end
 -- example verbatim. Still pcall-wrapped like every other native call.
 -- The manual README step stays documented until this is confirmed on
 -- real hardware (see GitHub issue #3).
+--
+-- CORRECTION from real hardware (Timer Probe, X14 on 26.1.2, 2026-09-14):
+-- the official example's bare-constant form throws "bad argument #1 to
+-- 'startCondition' (Source expected; got number)" -- and pcall was
+-- hiding exactly that. startCondition() needs a Source object. The one
+-- lookup that returns the "Always on" Source is the same table form the
+-- reference documents for timer sources:
+--   system.getSource({ category = CATEGORY_ALWAYS_ON, member = 0, options = 0 })
+-- (the bare system.getSource(CATEGORY_ALWAYS_ON) returns nil). Set that
+-- way, the probe read running() == true and watched the value count
+-- 60 -> 53 over 8 s -- GitHub #3 answered.
+local function alwaysOnSource()
+  local ok, src = pcall(system.getSource, { category = CATEGORY_ALWAYS_ON, member = 0, options = 0 })
+  if ok and src ~= nil and type(src) ~= "number" then return src end
+  return nil
+end
+
 local function autoConfigTimer()
   if not S.timerObj then return end
   pcall(function() S.timerObj:direction(-1) end)
-  pcall(function() S.timerObj:startCondition(CATEGORY_ALWAYS_ON) end)
+  local always = alwaysOnSource()
+  if always then
+    pcall(function() S.timerObj:startCondition(always) end)
+  end
   pcall(function() S.timerObj:countingSource(nil) end)
   S.timerAutoDone = true
 end

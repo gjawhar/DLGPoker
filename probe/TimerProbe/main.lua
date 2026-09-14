@@ -291,7 +291,25 @@ end
 local function runOff()
   local t = probe or byName("ProbeTimer")
   if not t then record("off", "no ProbeTimer -- run create first") return end
-  if not noneSrc then record("off", "no none-Source captured (run create first)") return end
+  if not noneSrc then
+    -- Run 2 hit this after a reopen (create not re-run). By analogy with
+    -- the Always-on lookup that worked, ask for CATEGORY_NONE the same
+    -- way; fall back to any timer whose start condition reads "---".
+    local ok, src = pcall(system.getSource, { category = CATEGORY_NONE, member = 0, options = 0 })
+    record("off:lookup getSource{cat=NONE,member=0,options=0}", ok and describe(src) or ("ERR " .. tostring(src)))
+    if ok and isSource(src) then noneSrc = src end
+  end
+  if not noneSrc then
+    for _, n in ipairs({ "Timer3", "Timer2", "FlightTime" }) do
+      local o = byName(n)
+      if o then
+        local okC, cur = pcall(function() return o:startCondition() end)
+        local okN, nm = pcall(function() return cur and cur:name() end)
+        if okC and isSource(cur) and okN and nm == "---" then noneSrc = cur record("off:noneSrc captured from " .. n, describe(cur)) break end
+      end
+    end
+  end
+  if not noneSrc then record("off", "no none-Source available -- run create first") return end
   local ok, e = pcall(function() t:startCondition(noneSrc) end)
   record("off:startCondition(none Source)", ok and ("ok; readback=" .. describe(select(2, pcall(function() return t:startCondition() end)))) or ("ERR " .. tostring(e)))
   startWatch("off", "expect STOPPED")
@@ -355,14 +373,22 @@ local function wakeup()
   lcd.invalidate()
 end
 
-local iconOk, icon = pcall(lcd.loadMask, "probe_icon.png")
-if not iconOk then icon = nil end
+-- Ethos expects a tool script to RETURN { init = fn } and calls init()
+-- itself -- registering at load time and returning nothing logs
+-- "main.luac should return a table" on the Info screen (the warning
+-- triangle seen on 2026-09-14, caused by v1/v2 of this probe). Same
+-- shape as PokerTimer/main.lua.
+local function init()
+  local iconOk, icon = pcall(lcd.loadMask, "probe_icon.png")
+  if not iconOk then icon = nil end
+  system.registerSystemTool({
+    name = "Timer Probe",
+    icon = icon,
+    create = create,
+    paint = paint,
+    wakeup = wakeup,
+    event = event,
+  })
+end
 
-system.registerSystemTool({
-  name = "Timer Probe",
-  icon = icon,
-  create = create,
-  paint = paint,
-  wakeup = wakeup,
-  event = event,
-})
+return { init = init }

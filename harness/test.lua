@@ -15,9 +15,7 @@ os.time = function() return math.floor(fakeClock) end
 local function tick(seconds) fakeClock = fakeClock + seconds end
 
 CATEGORY_LOGIC_SWITCH = "logic"
-CATEGORY_ALWAYS_ON = "always_on"   -- bare constant, passed straight to
-                                    -- timer:startCondition() per the
-                                    -- official Ethos Lua reference example
+CATEGORY_ALWAYS_ON = 1   -- real value on 26.1.2 (Timer Probe run 1)
 
 local sourceValues = {}
 local function setSrc(name, v) sourceValues[name] = v end
@@ -28,8 +26,18 @@ local function makeSource(name)
   }
 end
 local alertCalls = { tone = 0, haptic = 0 }
+-- The "Always on" Source, modelled on the real X14/26.1.2 readback
+-- (Timer Probe run 2): name "Always on", category 1, member 0. Only the
+-- table form {category=CATEGORY_ALWAYS_ON, member=0} resolves it -- the
+-- bare-constant form returns nil on hardware, and the mock mirrors that.
+local alwaysOnSource = { name = function() return "Always on" end, category = function() return 1 end, member = function() return 0 end }
 system = {
-  getSource = function(spec) if spec.name then return makeSource(spec.name) end return nil end,
+  getSource = function(spec)
+    if type(spec) ~= "table" then return nil end
+    if spec.category == CATEGORY_ALWAYS_ON and spec.member == 0 then return alwaysOnSource end
+    if spec.name then return makeSource(spec.name) end
+    return nil
+  end,
   playTone = function(freq, dur, pause) alertCalls.tone = alertCalls.tone + 1 end,
   playHaptic = function(dur, strength) alertCalls.haptic = alertCalls.haptic + 1 end,
 }
@@ -54,7 +62,13 @@ local function makeTimer(name)
     direction = function(self, ...) if select("#", ...) == 0 then return t._dir else t._dir = ... end end,
     countingSource = function(self, ...) if select("#", ...) == 0 then return t._cs else t._cs = ... end end,
     -- Separate from countingSource -- see autoConfigTimer() in core.lua.
-    startCondition = function(self, ...) if select("#", ...) == 0 then return t._start_cond else t._start_cond = ... end end,
+    -- Mirrors hardware: a bare number is rejected, only a Source is accepted.
+    startCondition = function(self, ...)
+      if select("#", ...) == 0 then return t._start_cond end
+      local v = ...
+      if type(v) ~= "table" then error("bad argument #1 to 'startCondition' (Source expected; got " .. type(v) .. ")") end
+      t._start_cond = v
+    end,
     -- Get/set the timer's name -- real Ethos API, confirmed via the
     -- official Lua reference (timer:name("New Name") renames it).
     name = function(self, ...) if select("#", ...) == 0 then return t._name else t._name = ... end end,
@@ -106,8 +120,10 @@ check("timer autoconfigured to countdown", core.S.timerObj:direction() == -1)
 check("timer countingSource cleared", core.S.timerObj:countingSource() == nil)
 -- The one that actually matters on real hardware (2026-09-13 re-read of
 -- the official reference): Start condition, not countingSource.
-check("timer startCondition set to ALWAYS_ON", core.S.timerObj:startCondition() == CATEGORY_ALWAYS_ON,
-  tostring(core.S.timerObj:startCondition()))
+local sc = core.S.timerObj:startCondition()
+check("timer startCondition set to the Always-on SOURCE (not the bare constant)",
+  type(sc) == "table" and sc:name() == "Always on" and sc:category() == CATEGORY_ALWAYS_ON,
+  tostring(sc))
 
 -- Defect 1: FS1-FS4 must resolve as DEFAULTS with no manual wiring at
 -- all -- core.init() should already have called resolveSwitches() against
