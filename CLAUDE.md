@@ -97,7 +97,10 @@ For a long time this read "real hardware contradicts the simulator":
 26.1.1 simulator but on a real X14 the countdown never started, so the
 pilot had to set Start condition = Always by hand. Two things were wrong,
 both found by reading the official reference (classTimer.html) and then
-bench-testing with `probe/TimerProbe/` on the X14 (Ethos 26.1.2):
+bench-testing with a throwaway probe tool on the X14 (Ethos 26.1.2) —
+`probe/TimerProbe/` was removed once its findings were folded in here;
+recover it with `git show 09e97ae:probe/TimerProbe/main.lua` if a new
+firmware needs re-probing:
 
 1. The Timer class has TWO source properties. `countingSource()` is a
    different setting (and only exists since 26.1.0 — on older firmware
@@ -122,8 +125,9 @@ survived an eject/reboot; timers enumerate as Sources via
 audioActions entries are `{type, start, step, haptic}` with `start` =
 seconds remaining at which the action begins. Constants on 26.1.2:
 `CATEGORY_TIMER=21 CATEGORY_ALWAYS_ON=1 CATEGORY_NONE=0 COUNTDOWN_VALUE=0
-COUNTDOWN_BEEP=1 PLAY_FILE=2 PLAY_VALUE=3`. Logs: the radio's
-`scripts/TimerProbe/Files/timer_probe_run{1,2}.csv`.
+COUNTDOWN_BEEP=1 PLAY_FILE=2 PLAY_VALUE=3`. (The probe's run logs were
+wiped from the radio with the 2026-09-15 fresh install; everything they
+showed is written up above.)
 
 **Probe-tool gotcha**: a tool script must `return { init = fn }` and let
 Ethos call `init()` — registering at load time and returning nothing
