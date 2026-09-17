@@ -67,10 +67,12 @@ local function event(widget, category, value, x, y)
 end
 
 local function close(widget)
-  -- Zero the target timer on the way out (GitHub #1) -- pcall-wrapped
-  -- like every other callback here, so a failure can never block the
-  -- close itself.
+  -- Leaving ends the game and zeroes the target timer (GitHub #1; pilot
+  -- request 2026-09-15), then the UI state is reset so the next open is
+  -- a fresh SETUP -- pcall-wrapped like every other callback here, so a
+  -- failure can never block the close itself.
   pcall(core.onClose)
+  pcall(screen.reset)
   return true
 end
 

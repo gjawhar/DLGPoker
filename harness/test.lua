@@ -32,10 +32,16 @@ local alertCalls = { tone = 0, haptic = 0 }
 -- (Timer Probe run 2): name "Always on", category 1, member 0. Only the
 -- table form {category=CATEGORY_ALWAYS_ON, member=0} resolves it -- the
 -- bare-constant form returns nil on hardware, and the mock mirrors that.
-local alwaysOnSource = { name = function() return "Always on" end, category = function() return 1 end, member = function() return 0 end }
+local alwaysOnSource = { name = function() return "Always on" end, category = function() return 1 end, member = function() return 0 end, options = function() return 0 end }
 -- The "---" Source (no start condition), same real readback shape.
 CATEGORY_NONE = 0
-local noneSource = { name = function() return "---" end, category = function() return 0 end, member = function() return 0 end }
+local noneSource = { name = function() return "---" end, category = function() return 0 end, member = function() return 0 end, options = function() return 0 end }
+-- A logic-switch Source standing in for the DLG template's FlightTime
+-- start condition. options() is deliberately NON-zero: the real restore
+-- bug (X14 field test, 2026-09-15) was a lookup hard-coded to options=0,
+-- and this mock resolves the Source only when all three fields match.
+CATEGORY_LOGIC_SWITCH = 6
+local launchLogicSource = { name = function() return "LS3" end, category = function() return CATEGORY_LOGIC_SWITCH end, member = function() return 2 end, options = function() return 7 end }
 -- Declared BEFORE `system` so getSource's closure captures these locals
 -- -- defined below it they'd resolve as nil globals (the exact scope trap
 -- this project keeps documenting; it bit this file too, 2026-09-14).
@@ -45,13 +51,14 @@ local fakeTimers = {}
 local function timerSourceForMember(m)
   local t = fakeTimers[m + 1]
   local n = t and t:name() or "---"
-  return { name = function() return n end, category = function() return CATEGORY_TIMER end, member = function() return m end }
+  return { name = function() return n end, category = function() return CATEGORY_TIMER end, member = function() return m end, options = function() return 0 end }
 end
 system = {
   getSource = function(spec)
     if type(spec) ~= "table" then return nil end
     if spec.category == CATEGORY_ALWAYS_ON and spec.member == 0 then return alwaysOnSource end
     if spec.category == CATEGORY_NONE and spec.member == 0 then return noneSource end
+    if spec.category == CATEGORY_LOGIC_SWITCH and spec.member == 2 and spec.options == 7 then return launchLogicSource end
     if spec.category == CATEGORY_TIMER and spec.member and spec.member >= 0 and spec.member <= 9 then return timerSourceForMember(spec.member) end
     if spec.name then return makeSource(spec.name) end
     return nil
@@ -946,17 +953,29 @@ deniedTimerNames["PokerTimer"] = nil
 core.resolveTimerNow()
 check("cleaned up: resolves normally again", core.timerMissing() == false)
 
--- ---- Test 26: core.onClose() (GitHub #1) -- leaving the tool zeroes the
--- timer, and leaving mid-FLIGHT also records the in-progress attempt as
--- a bust so a reopen + brake can't score a phantom hit off the zeroed
--- timer (the target-reached rule would otherwise waive confirmation).
+-- ---- Test 26: core.onClose() -- leaving the tool ENDS the game (pilot
+-- request, 2026-09-15 field test: RTN used to reopen onto the same
+-- screen) and zeroes/switches off the timer (GitHub #1). A game with a
+-- throw in it is logged as it stands; a game nobody threw in is
+-- discarded; the next open is a fresh SETUP either way.
+local function gamesLogged()
+  local f = io.open("Files/games.csv", "r")
+  if not f then return 0 end
+  local n = 0
+  for _ in f:lines() do n = n + 1 end
+  f:close()
+  return n
+end
+local function freshGame(armed)
+  return { startTs = os.time(), deadline = os.time() + 600, windowS = 600, betCount = 2,
+           bets = { { idx = 1, target_s = 60, result = "pending", attempts = 0, scored_s = 0, allIn = false },
+                    { idx = 2, target_s = nil, result = "pending", attempts = 0, scored_s = 0, allIn = false } },
+           idx = 1, score = 0, armed = armed, editMin = 1, editSec = 0, allInPending = false }
+end
 
 -- (a) mid-flight: armed, one real throw, confirmed, timer still counting
 core.S.screen = core.SCREEN.LIVE
-core.S.game = { startTs = os.time(), deadline = os.time() + 600, windowS = 600, betCount = 2,
-                bets = { { idx = 1, target_s = 60, result = "pending", attempts = 0, scored_s = 0, allIn = false },
-                         { idx = 2, target_s = nil, result = "pending", attempts = 0, scored_s = 0, allIn = false } },
-                idx = 1, score = 0, armed = true, editMin = 1, editSec = 0, allInPending = false }
+core.S.game = freshGame(true)
 core.S.flightConfirmed = false
 core.S.prevZoomConfirm = nil
 setSrc("ZOOM_MODE", -100)
@@ -967,37 +986,47 @@ setSrc("ZOOM_MODE", -100); core.wakeup()     -- elevator exit: confirmed
 tick(5)
 check("(26a) flying: confirmed, timer counting", core.S.flightConfirmed == true and core.liveTimerValue() > 50,
   "live=" .. tostring(core.liveTimerValue()))
+local loggedBefore = gamesLogged()
 core.onClose()
 local closeVal = core.liveTimerValue()
 check("(26a) timer zeroed on close", closeVal ~= nil and math.abs(closeVal) < 1, tostring(closeVal))
 check("(26a) timer switched OFF on close (start condition ---)", startCondName() == "---", startCondName())
-check("(26a) in-flight attempt recorded as a bust", core.S.game.bets[1].result == "bust",
-  tostring(core.S.game.bets[1].result))
-check("(26a) still armed for a normal retry", core.S.game.armed == true)
-check("(26a) confirmation cleared", core.S.flightConfirmed == false)
--- reopen + brake must NOT score anything: bust already recorded, and the
--- landing gate requires confirmation again (timer at zero alone would
--- have waived it -- that's the phantom-hit path this closes)
+check("(26a) game ended: no game in memory, back on SETUP",
+  core.S.game == nil and core.S.screen == core.SCREEN.SETUP,
+  "game=" .. tostring(core.S.game) .. " screen=" .. tostring(core.S.screen))
+check("(26a) a game with a throw in it is logged as it stands", gamesLogged() == loggedBefore + 1,
+  tostring(gamesLogged()) .. " vs " .. tostring(loggedBefore))
+check("(26a) confirmation and landing latches cleared",
+  core.S.flightConfirmed == false and core.S.landingActive == false)
+-- reopen + brake: there is no game any more, so nothing can score
 setSrc("LANDING_MODE", 100); pump(1.1); setSrc("LANDING_MODE", -100); core.wakeup()
-check("(26a) reopen + brake does not turn the closed flight into a hit",
-  core.S.game.bets[1].result == "bust" and core.S.game.score == 0,
-  "result=" .. tostring(core.S.game.bets[1].result) .. " score=" .. tostring(core.S.game.score))
+check("(26a) reopen + brake scores nothing", core.S.game == nil and core.S.screen == core.SCREEN.SETUP)
 
--- (b) not armed (editing screen, nothing in flight): only the timer moves
-core.S.game.armed = false
-core.S.game.bets[1].result = "pending"
+-- (b) editing screen, nothing ever thrown: discarded, NOT logged
+core.S.screen = core.SCREEN.LIVE
+core.S.game = freshGame(false)
 core.S.timerObj:start(45); core.S.timerObj:reset()
+loggedBefore = gamesLogged()
 core.onClose()
 local closeVal2 = core.liveTimerValue()
 check("(26b) timer zeroed on close while editing", closeVal2 ~= nil and math.abs(closeVal2) < 1, tostring(closeVal2))
-check("(26b) nothing else touched", core.S.game.bets[1].result == "pending" and core.S.game.armed == false)
+check("(26b) an untouched game is discarded, not logged",
+  core.S.game == nil and core.S.screen == core.SCREEN.SETUP and gamesLogged() == loggedBefore)
 
--- (c) no game at all, and no timer object: must be a safe no-op
+-- (c) leaving from the summary: the finished game is already logged; just clear it
+core.S.screen = core.SCREEN.SUMMARY
+core.S.game = freshGame(false)
+loggedBefore = gamesLogged()
+core.onClose()
+check("(26c) leaving from SUMMARY clears the game without logging it twice",
+  core.S.game == nil and core.S.screen == core.SCREEN.SETUP and gamesLogged() == loggedBefore)
+
+-- (d) no game at all, and no timer object: must be a safe no-op
 core.S.game = nil
 local savedTimer = core.S.timerObj
 core.S.timerObj = nil
 local okClose = pcall(core.onClose)
-check("(26c) onClose is a safe no-op with no game and no timer", okClose == true)
+check("(26d) onClose is a safe no-op with no game and no timer", okClose == true)
 core.S.timerObj = savedTimer
 
 -- ---- Test 27: the picker (GitHub #2 failure path) -- PokerTimer absent
@@ -1038,31 +1067,50 @@ model.createTimer = realCreate
 
 -- ---- Test 28: the model's FlightTime count-up timer is paused for the
 -- length of a game and restored afterwards (pilot request, 2026-09-14),
--- with the original start condition persisted so a power-off mid-game
--- can be undone at the next init.
+-- with the original start condition's full identity persisted so a
+-- power-off mid-game can be undone at the next init. The stand-in for
+-- the template's launch condition is a logic switch with options ~= 0
+-- -- the X14 field test (2026-09-15) found the restore silently losing
+-- exactly that.
+local function ftCond() local ft = model.getTimer("FlightTime"); local sc = ft and ft:startCondition(); return sc and sc:name() or "nil" end
 local ft = model.getTimer("FlightTime")
-ft:startCondition(alwaysOnSource)   -- stands in for the template's own launch condition
+ft:startCondition(launchLogicSource)
 core.S.game = nil
 core.S.screen = core.SCREEN.SETUP
-core.S.cfg.pausedTimerCat = nil; core.S.cfg.pausedTimerMember = nil
+core.S.cfg.pausedTimerCat = nil; core.S.cfg.pausedTimerMember = nil; core.S.cfg.pausedTimerOptions = nil
 core.startGame()
-check("(28) FlightTime paused (start condition ---) when a game starts",
-  ft:startCondition() and ft:startCondition():name() == "---", ft:startCondition() and ft:startCondition():name() or "nil")
-check("(28) original start condition persisted (cat/member)",
-  core.S.cfg.pausedTimerCat == 1 and core.S.cfg.pausedTimerMember == 0,
-  tostring(core.S.cfg.pausedTimerCat) .. "/" .. tostring(core.S.cfg.pausedTimerMember))
+check("(28) FlightTime paused (start condition ---) when a game starts", ftCond() == "---", ftCond())
+check("(28) original identity persisted (category/member/options)",
+  core.S.cfg.pausedTimerCat == CATEGORY_LOGIC_SWITCH and core.S.cfg.pausedTimerMember == 2 and core.S.cfg.pausedTimerOptions == 7,
+  tostring(core.S.cfg.pausedTimerCat) .. "/" .. tostring(core.S.cfg.pausedTimerMember) .. "/" .. tostring(core.S.cfg.pausedTimerOptions))
 check("(28) PokerTimer itself untouched by the pause", core.S.timerObj:name() ~= "FlightTime")
 core.onClose()
-check("(28) FlightTime restored on close", ft:startCondition() and ft:startCondition():name() == "Always on",
-  ft:startCondition() and ft:startCondition():name() or "nil")
-check("(28) persisted original cleared after restore", core.S.cfg.pausedTimerCat == nil and core.S.cfg.pausedTimerMember == nil)
--- power-off mid-game: only the persisted values survive; init's restore path
+check("(28) FlightTime restored on close (the captured Source handed back)", ftCond() == "LS3", ftCond())
+check("(28) persisted identity cleared after a verified restore",
+  core.S.cfg.pausedTimerCat == nil and core.S.cfg.pausedTimerMember == nil and core.S.cfg.pausedTimerOptions == nil)
+-- power-off mid-game: only the persisted identity survives; init's restore path
 ft:startCondition(noneSource)
-core.S.cfg.pausedTimerCat = 1; core.S.cfg.pausedTimerMember = 0
-core.S.pausedTimer = nil
+core.S.cfg.pausedTimerCat = CATEGORY_LOGIC_SWITCH; core.S.cfg.pausedTimerMember = 2; core.S.cfg.pausedTimerOptions = 7
+core.S.pausedTimer = nil; core.S.pausedSrc = nil
 core.resumeFlightTimer()
-check("(28) restored from persisted cat/member alone (power-off recovery)",
-  ft:startCondition() and ft:startCondition():name() == "Always on")
+check("(28) restored from the persisted identity alone (power-off recovery)", ftCond() == "LS3", ftCond())
+-- the field-test bug, reproduced: an identity the lookup can't resolve
+-- (here: wrong options) must NOT be thrown away -- FlightTime stays off
+-- for now, the identity is kept for the next init, and the pilot is told
+ft:startCondition(noneSource)
+core.S.cfg.pausedTimerCat = CATEGORY_LOGIC_SWITCH; core.S.cfg.pausedTimerMember = 2; core.S.cfg.pausedTimerOptions = 0
+core.S.pausedTimer = nil; core.S.pausedSrc = nil
+core.S.status = nil
+core.resumeFlightTimer()
+check("(28) a failed restore keeps the persisted identity for another try",
+  ftCond() == "---" and core.S.cfg.pausedTimerCat == CATEGORY_LOGIC_SWITCH and core.S.cfg.pausedTimerMember == 2,
+  ftCond() .. " cat=" .. tostring(core.S.cfg.pausedTimerCat))
+check("(28) ...and tells the pilot which timer to check",
+  type(core.S.status) == "string" and core.S.status:find("FlightTime", 1, true) ~= nil, tostring(core.S.status))
+core.S.cfg.pausedTimerOptions = 7
+core.resumeFlightTimer()
+check("(28) the retry with a resolvable identity restores it and clears the record",
+  ftCond() == "LS3" and core.S.cfg.pausedTimerCat == nil, ftCond())
 -- disabled / missing: nothing happens, nothing crashes
 core.S.cfg.pauseTimerName = "NoSuchTimer"
 core.S.game = nil; core.S.screen = core.SCREEN.SETUP

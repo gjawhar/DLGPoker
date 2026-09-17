@@ -174,6 +174,7 @@ local function defaults()
     -- running, so a power-off mid-game can still be undone at next init.
     pausedTimerCat = nil,
     pausedTimerMember = nil,
+    pausedTimerOptions = nil,
     landingSwitchName = "LANDING_MODE",   -- Lua-timed default (S6.4)
     landingMode   = "lua",                -- "lua" | "native" (LANDED_STABLE)
     -- 1.0s (pilot request, 2026-09, field test): a quick brake tap in
@@ -601,12 +602,38 @@ end
 -- up from every launch, which is noise while PokerTimer is counting
 -- down. Mechanism is the one the Timer Probe confirmed: set its start
 -- condition to the "---" Source, and put the ORIGINAL Source back
--- afterwards. The original is remembered two ways -- the object for the
--- normal in-session restore, and its category/member persisted in
--- config so a power-off mid-game is undone at the next init (the same
--- {category, member, options=0} lookup that returns the Always-on
--- Source returns any Source). Missing timer, blank name, or an
--- unreadable start condition: silently do nothing, both ways.
+-- afterwards. The original is remembered two ways: the Source OBJECT
+-- itself, handed straight back on the normal in-session restore (game
+-- end / RTN out), and its full identity -- category, member AND
+-- options -- persisted in config so a power-off mid-game is undone at
+-- the next init via system.getSource({category, member, options}).
+--
+-- Field test 2026-09-15 (X14): the first version looked the original
+-- up with options hard-coded to 0 and cleared the persisted identity
+-- whether or not the lookup found anything -- FlightTime (start
+-- condition = a logic switch in the DLG template) came back "---" after
+-- every game, for good. Now the captured object is preferred, options
+-- travels with category/member, and the persisted identity is only
+-- cleared once the timer's start condition READS BACK as the original;
+-- otherwise it stays for another try at the next init and the pilot is
+-- told. Missing timer, blank name, or an unreadable start condition:
+-- silently do nothing, both ways.
+local function sourceIdentity(src)
+  local okC, cat = pcall(function() return src:category() end)
+  local okM, mem = pcall(function() return src:member() end)
+  local okO, opt = pcall(function() return src:options() end)
+  if not (okC and okM and type(cat) == "number" and type(mem) == "number") then return nil end
+  if not (okO and type(opt) == "number") then opt = 0 end
+  return cat, mem, opt
+end
+local function clearPausedTimer()
+  S.pausedTimer = nil
+  S.pausedSrc = nil
+  S.cfg.pausedTimerCat = nil
+  S.cfg.pausedTimerMember = nil
+  S.cfg.pausedTimerOptions = nil
+  core.saveConfig()
+end
 local function pauseFlightTimer()
   local name = S.cfg.pauseTimerName
   if not name or name == "" or name == S.cfg.timerName then return end
@@ -614,34 +641,46 @@ local function pauseFlightTimer()
   if not t then return end
   local ok, cur = pcall(function() return t:startCondition() end)
   if not ok or cur == nil or type(cur) == "number" then return end
-  local okC, cat = pcall(function() return cur:category() end)
-  local okM, mem = pcall(function() return cur:member() end)
-  if not (okC and okM and type(cat) == "number" and type(mem) == "number") then return end
+  local cat, mem, opt = sourceIdentity(cur)
+  if cat == nil then return end
+  if cat == (rawget(_G, "CATEGORY_NONE") or 0) then return end   -- already off; nothing to pause or restore
   local none = noneSource()
   if not none then return end
-  if cat == (rawget(_G, "CATEGORY_NONE") or 0) then return end   -- already off; nothing to pause or restore
   local okSet = pcall(function() t:startCondition(none) end)
   if not okSet then return end
   S.pausedTimer = t
+  S.pausedSrc = cur
   S.cfg.pausedTimerCat = cat
   S.cfg.pausedTimerMember = mem
+  S.cfg.pausedTimerOptions = opt
   core.saveConfig()
 end
-
 function core.resumeFlightTimer()
   local cat, mem = S.cfg.pausedTimerCat, S.cfg.pausedTimerMember
-  if cat == nil or mem == nil then S.pausedTimer = nil return end
+  if cat == nil or mem == nil then S.pausedTimer = nil S.pausedSrc = nil return end
   local t = S.pausedTimer or getTimerByName(S.cfg.pauseTimerName)
-  if t then
-    local ok, src = pcall(system.getSource, { category = cat, member = mem, options = 0 })
-    if ok and src ~= nil and type(src) ~= "number" then
-      pcall(function() t:startCondition(src) end)
+  if not t then clearPausedTimer() return end   -- renamed/deleted meanwhile: nothing to put back
+  local src = S.pausedSrc
+  if not src then
+    local ok, found = pcall(system.getSource, { category = cat, member = mem, options = S.cfg.pausedTimerOptions or 0 })
+    if ok and found ~= nil and type(found) ~= "number" then src = found end
+  end
+  local restored = false
+  if src then
+    pcall(function() t:startCondition(src) end)
+    local okR, rb = pcall(function() return t:startCondition() end)
+    if okR and rb ~= nil and type(rb) ~= "number" then
+      local rc, rm = sourceIdentity(rb)
+      restored = (rc == cat and rm == mem)
     end
   end
-  S.pausedTimer = nil
-  S.cfg.pausedTimerCat = nil
-  S.cfg.pausedTimerMember = nil
-  core.saveConfig()
+  if restored then
+    clearPausedTimer()
+  else
+    S.pausedTimer = nil
+    S.pausedSrc = nil
+    core.setStatus("could not restore " .. tostring(S.cfg.pauseTimerName) .. " - check SYSTEM > TIMERS")
+  end
 end
 
 function core.pickerMove(d)
@@ -787,38 +826,43 @@ function core.recoverFromWakeupError()
   S.relaunchCalls = 0
 end
 
--- Called from main.lua's close() when the pilot leaves the tool (GitHub
--- #1, pilot request 2026-09-13). The target timer's start condition is
--- Always, so with the tool gone nothing else ever stops it: it would run
--- into negative numbers and keep re-firing its own threshold callouts.
--- Zero the value only -- deliberately NOT flipping the start condition
--- off ("no use in doing both"). finalizeGame() and every hit/bust path
--- already zero it, so this only matters for leaving mid-game.
+-- Called from main.lua's close() when the pilot leaves the tool.
 --
--- Leaving mid-FLIGHT is the one case that needs more than a reset: with
--- the timer zeroed but the attempt still armed-and-pending, reopening
--- the tool and braking would read `val <= 0` and score a HIT the flight
--- never earned (the target-reached rule waives elevator confirmation).
--- So an in-progress attempt is recorded as a bust first -- the flight is
--- unobservable once the tool is closed, and a bust keeps the bet armed
--- for a normal retry on the next throw, exactly like a real bust does.
--- A hard power-off never reaches this (no Lua callback runs); that case
--- is out of scope by design.
+-- Leaving ENDS the game (pilot request, 2026-09-15 field test). The old
+-- behaviour parked the game in memory -- the tool's Lua state survives
+-- a close, and init() early-returns once S.ready -- so RTN mid-game or
+-- from the summary reopened straight back onto that screen, with no way
+-- to start over except playing it out. Now RTN is the escape: a game
+-- with at least one throw in it is finalized and logged as it stands
+-- (unplayed bets "unresolved"); a game nobody threw in is discarded;
+-- either way the next open lands on a fresh SETUP. The target timer is
+-- zeroed and switched off (GitHub #1) and a paused FlightTime restored.
+-- A hard power-off never reaches this (no Lua callback runs); init()'s
+-- resumeFlightTimer() covers that case.
+--
+-- finalizeGame is forward-declared: it's defined further down this file,
+-- and a plain `local function` there would be invisible here -- the
+-- syntax-passes-runtime-fails trap this project documented after the
+-- draw.lua incident (and hit in this very function once, Test 26).
+local finalizeGame
 function core.onClose()
   local g = S.game
-  if g and g.armed then
-    -- g.bets[g.idx] directly, not currentBet(): that local is defined
-    -- further down this file, so from here it would resolve as a nil
-    -- global -- the exact syntax-passes-runtime-fails trap this project
-    -- documented after the draw.lua incident. Caught by harness Test 26.
-    local bet = g.bets[g.idx]
-    if bet and bet.attempts > 0 and bet.result == "pending" then
-      bet.result = "bust"
-      S.flightConfirmed = false
-      S.prevZoomConfirm = nil
-      core.setStatus("bust - tool closed mid-flight; relaunch to retry")
+  if g and S.screen == SCREEN.LIVE then
+    local played = false
+    for i = 1, g.betCount do
+      local b = g.bets[i]
+      if b.result ~= "pending" or (b.attempts or 0) > 0 then played = true break end
     end
+    if played then finalizeGame() end
   end
+  S.game = nil
+  S.screen = SCREEN.SETUP
+  S.flightConfirmed = false
+  S.prevZoomConfirm = nil
+  S.landingActive = false
+  S.landingCalls = 0
+  S.relaunchCalls = 0
+  S.status = nil
   timerSet(0)
   timerReset()
   core.resumeFlightTimer()
@@ -955,7 +999,7 @@ function core.cancelArm()
   bet.allIn = false
 end
 
-local function finalizeGame()
+function finalizeGame()   -- assigns the forward-declared local above onClose
   local g = S.game
   if not g then return end
   for i = g.idx, g.betCount do

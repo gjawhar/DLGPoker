@@ -1020,6 +1020,20 @@ end
 
 -- ---------------------------------------------------------------- paint / event
 
+-- Called from main.lua's close(): now that leaving ends the game (see
+-- core.onClose), none of this module's UI state may leak into the next
+-- open -- a half-edited MIN field, a footer highlight, the LOG scroll
+-- position, or a Settings form left open.
+function screen.reset()
+  rotaryEditField = nil
+  logTop = 1
+  for k in pairs(focus) do focus[k] = 1 end
+  if inForm then
+    pcall(function() form.clear() end)
+    inForm = false
+  end
+end
+
 function screen.paint(w, h)
   if inForm then return end   -- form owns painting while open
   valueRects = {}   -- cleared every dispatched paint, not just SETUP/LIVE's

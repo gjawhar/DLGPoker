@@ -83,6 +83,11 @@ voice announcements well.
 7. After every bet in the game is resolved (or the window runs out), a
    summary shows each bet's result and the total score, logged for later
    review (recent games, best game, running average).
+8. **RTN / EXIT ends the game.** Leave the tool at any point and the game
+   is over: if you'd thrown at least once it's logged as it stands (bets
+   you never got to are marked unresolved), a game with no throw in it is
+   simply dropped, and the next time you open DLG Poker it starts fresh
+   on the setup screen. The radio's timers are put back as they were.
 
 ## Settings
 

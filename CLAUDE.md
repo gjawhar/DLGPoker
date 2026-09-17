@@ -540,21 +540,37 @@ target-reached branch -- these previously left it counting until the
 next throw re-armed it), and **leaving the tool** via `main.lua`'s
 `close()` -> `core.onClose()` (previously a no-op).
 
-`core.onClose()` deliberately zeroes the VALUE only -- pilot decision:
-do not also flip the start condition off ("no use in doing both").
-Leaving mid-flight additionally records the in-progress attempt as a
-bust (armed stays true, so it's a normal retry on reopen): with the timer
-zeroed but the attempt still pending, a reopen + brake would otherwise
-read `val <= 0` and score a phantom hit, since the target-reached rule
-waives elevator confirmation. A hard power-off never reaches `close()`
-and is out of scope by design. Harness Test 26 covers all three cases
-(mid-flight, editing, no game/no timer) and the reopen+brake trap.
+`core.onClose()` zeroes the value AND switches the start condition to
+`---` (see the next section for why zero alone wasn't enough).
 
-**Scope trap, again**: `core.onClose()` sits above `currentBet()` in the
-file, so it must index `g.bets[g.idx]` directly -- calling `currentBet()`
-from there resolves as a nil global. Syntax-checked clean, failed only
-at runtime, caught by Test 26 on its first run. Same class of bug as the
-draw.lua incident in [[reference_lua_testing_via_lupa]].
+## Leaving the tool ends the game (2026-09-15, field test, core/screen/main)
+
+The tool's Lua state survives a close -- Ethos keeps the chunk loaded,
+and `core.init()` early-returns once `S.ready` -- so before this change
+RTN mid-game or from the summary reopened straight back onto the same
+screen, with no way to start over short of playing the game out (pilot:
+"it's kind of strange how to exit the app"). Now RTN *is* the escape:
+`core.onClose()` ends the game. A game with at least one throw in it
+(any bet not `pending`, or `attempts > 0`) is finalized through
+`finalizeGame()` and logged as it stands, unplayed bets `"unresolved"`;
+a game nobody threw in is discarded; leaving from SUMMARY/LOG just
+clears the already-logged game. Either way `S.game = nil`, `S.screen =
+SETUP`, the landing/confirmation latches are cleared, the timer is
+zeroed + switched off and a paused FlightTime restored. `main.lua`'s
+`close()` then calls `screen.reset()` so the module-level UI state
+(rotary edit field, footer focus, LOG scroll, an open Settings form)
+can't leak into the next open. The old "record the in-flight attempt as
+a bust so a reopen + brake can't phantom-hit" logic is gone -- there is
+no game left to score into. A hard power-off never reaches `close()`;
+`init()`'s `resumeFlightTimer()` covers the FlightTime half of that.
+
+**Scope trap, again**: `core.onClose()` sits above `finalizeGame()` in
+the file, so `finalizeGame` is forward-declared (`local finalizeGame`
+above `onClose`, plain `function finalizeGame()` below assigns it).
+Same class of bug as the draw.lua incident in
+[[reference_lua_testing_via_lupa]]; Test 26 (rewritten: mid-flight →
+logged, editing → discarded, summary → cleared, no game/no timer) is
+what would catch a regression.
 
 ## PokerTimer bootstrap (2026-09-14, GitHub #2, core.lua + screen.lua + config.lua)
 
@@ -629,17 +645,29 @@ noise during a Poker game. `pauseFlightTimer()` (called at the end of
 disables), records its current start condition's category/member,
 persists them (`cfg.pausedTimerCat/Member`), and sets the `---` Source.
 `core.resumeFlightTimer()` — from `finalizeGame()`, `onClose()`, and
-`core.init()` (power-off-mid-game recovery) — re-obtains the original
-via `system.getSource({category, member, options = 0})` (the lookup
-form the probe confirmed for the Always-on Source) and puts it back,
-then clears the persisted pair. Missing/blank/unreadable → no-op both
-ways; a timer already at `---` is left alone. This closes the
-"Timer1 coexistence" known-open item below. **Restoring a *logic-
-switch* start condition through that lookup is the one part not yet
-seen on hardware** — FlightTime's real start condition on the template
-is a logic switch; the first game on the radio will show whether it
-comes back. Harness Test 28 covers pause / restore / power-off recovery
-/ unknown name / blank.
+`core.init()` (power-off-mid-game recovery) — puts the original back.
+Missing/blank/unreadable → no-op both ways; a timer already at `---` is
+left alone. This closes the "Timer1 coexistence" known-open item below.
+
+**Field test 2026-09-15 (X14): the restore didn't work.** FlightTime
+was paused fine but came back `---` after every game. Two defects in
+the first version: (1) the original was re-obtained with
+`system.getSource({category, member, options = 0})` — `options` is the
+third field of a Source's identity (`Source:options()`, LuaDoc since
+1.1.4) and was never read, so for the template's logic-switch condition
+the lookup didn't return the right Source; (2) the persisted pair was
+cleared whether or not the lookup found anything, so one failed attempt
+lost the record for good. Now: the Source OBJECT read at pause time is
+kept (`S.pausedSrc`) and handed straight back for in-session restores
+(game end, RTN out) — the probe already showed a captured Source can be
+reused; `options` is read and persisted with category/member
+(`cfg.pausedTimerOptions`) for the power-off path; and the record is
+only cleared once the timer's start condition reads back with the
+original category/member — otherwise it is kept for the next init and
+`setStatus("could not restore …")` tells the pilot. Harness Test 28's
+stand-in is now a logic-switch Source with `options ~= 0` that the mock
+resolves only when all three fields match, and it reproduces the
+failed-lookup case. Hardware confirmation of the fix still pending.
 
 ## Known-open items (as of last session)
 
