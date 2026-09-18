@@ -11,6 +11,33 @@ moment and keep score — it doesn't add its own audio or invent a second
 timekeeping system, since Ethos timers already do countdown beeps and
 voice announcements well.
 
+## Screens
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/2_setup.png" alt="Setup screen: working-time window and number of bets"><br><sub><b>Setup.</b> Pick the window and the number of bets, then START.</sub></td>
+    <td width="50%"><img src="docs/screenshots/3_place_bet.png" alt="Placing a bet: minutes and seconds boxes"><br><sub><b>Place a bet.</b> Dial in MIN and SEC, then just throw. The launch locks the bet and starts the timer.</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/4_in_flight.png" alt="In flight: the bet counting down"><br><sub><b>In flight.</b> The bet counts down on the radio's own timer, with its voice callouts.</sub></td>
+    <td><img src="docs/screenshots/5_bust.png" alt="Bust: landed before the timer reached zero"><br><sub><b>Bust.</b> Landed early. The bet stays locked, and relaunching retries it.</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/6_hit_next_bet.png" alt="Hit: bet credited and the next bet ready to edit"><br><sub><b>Hit.</b> The time is credited and the next bet is ready to edit, with no button press.</sub></td>
+    <td><img src="docs/screenshots/7_summary.png" alt="Game complete: every bet's result and the total score"><br><sub><b>Game complete.</b> Every bet's result, attempts in brackets, and the total score.</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/8_log.png" alt="Game log with recent games, average and best"><br><sub><b>Game log.</b> Recent games, measured against your average and your best.</sub></td>
+    <td><img src="docs/screenshots/9_in_flight_night.png" alt="Night mode, in flight"><br><sub><b>Night mode.</b> Same layout, dark palette.</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/1_first_run.png" alt="One-time setup screen: PokerTimer created"><br><sub><b>First run.</b> DLG Poker creates its own <code>PokerTimer</code> and tells you once.</sub></td>
+    <td></td>
+  </tr>
+</table>
+
+<sub>These images are produced by <a href="harness/render.py"><code>harness/render.py</code></a>, which plays a scripted game through the app's real game logic and drawing code at the X14's 640-pixel width. Layout, colours, text and game state are exactly what the radio draws. The typeface is the computer's, not the Ethos font, so letter shapes differ slightly from the real screen.</sub>
+
 ## How a game works
 
 | Term | Meaning |

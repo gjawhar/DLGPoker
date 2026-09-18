@@ -27,7 +27,9 @@ recent, most likely to still be relevant.
 PokerTimer/       -- the app: main.lua, core.lua, screen.lua, config.lua,
                      draw.lua, pokertimer.png (system tool icon)
 harness/          -- test.lua (56+ tests) + core.lua (a SYNCED COPY of
-                     PokerTimer/core.lua -- see workflow below)
+                     PokerTimer/core.lua -- see workflow below);
+                     render.py + render.lua -- README screenshots (below)
+docs/screenshots/ -- PNGs the README embeds; regenerate, never hand-edit
 DLG_Poker_Timer___Requirements_Specification.md
 ```
 
@@ -35,6 +37,26 @@ Both apps are **system tools only, no widget** (a deliberate choice for
 DLG Poker — see spec §5.4 — since a poker game demands continuous active
 engagement, unlike a background-logging tool). Registering as a widget was
 considered and explicitly rejected.
+
+## README screenshots (2026-09-18)
+
+`python3 harness/render.py` regenerates `docs/screenshots/*.png`. It
+copies the real `PokerTimer/*.lua` into a temp dir, runs
+`harness/render.lua` under lupa -- mocked Ethos globals, a fake clock,
+and an `lcd` mock that records every primitive as SVG -- and plays a
+scripted game through core.lua's real logic (throw, bust, retry, hit,
+window expiry, log, night mode, the one-time PokerTimer notice), then
+rasterises each SVG at 2x with headless Chrome. Re-run it after any
+visible UI change. Honest limits, also stated under the README's
+images: glyph shapes are the host's sans-serif, not the Ethos font;
+text widths come from a Helvetica-style table pinned with `textLength`,
+so a string that *just* fits here could still be `fitText()`-cut on the
+radio (the first-run screen's "Want different callouts?..." line is the
+tightest one). Font line heights (S 20, M 25, L 28, XL 37) are the
+values measured on the X14. It needs `io.read(f, n)` shimmed to
+`f:read(n)` (Ethos's global-function io) or the LOG screen has no rows.
+Real simulator captures are possible (`simulator.screenshot()` from a
+macro) but need the pilot to run the macro by hand.
 
 ## Critical Ethos-specific findings (do not re-guess these)
 
