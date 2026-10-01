@@ -715,6 +715,29 @@ stand-in is now a logic-switch Source with `options ~= 0` that the mock
 resolves only when all three fields match, and it reproduces the
 failed-lookup case. Hardware confirmation of the fix still pending.
 
+**2026-09-30: that fix is NOT confirmed, and half the diagnosis was
+wrong.** The X14's `Files/config.csv`, read while deploying 1.2.0,
+still held `pausedTimerCat,13 / pausedTimerMember,20 /
+pausedTimerOptions,0` after a 1.1.0 game. So (a) the template's
+condition has options 0 — the original lookup used the right three
+numbers and still failed — and (b) 1.1.0's restore either never ran
+(USB plugged in mid-game: no `close()`) or failed its read-back. Not
+knowable from the desk, so 1.2.0 makes it knowable: `resumeFlightTimer()`
+now builds a list of candidates — the captured object, `{category,
+member, options}`, `{category, member}`, `{category, name}` (the lookup
+`getLogic()` already uses on hardware) and the bare name — skips any
+that doesn't itself read as the original category+member (a captured
+object that turns out to be a *live view* of the timer's setting reads
+`---` after the pause and must never be set back as "the original"),
+sets each in turn and verifies by read-back. The Source's name is now
+persisted too (`cfg.pausedTimerSrcName`, read BEFORE the switch-off).
+Every step is appended to **`Files/diag.csv`** (`ts, version, event,
+detail`: the identity at pause, what the captured object reads
+afterwards, each lookup's result, the setter's error text, the
+read-back). **After the next game on the radio, read that file** — it
+names the route that works, or the exact error. Test 28 covers the
+by-name route, the live-view case and the diag rows (harness 190).
+
 ## Known-open items (as of last session)
 
 1. **Timer1 coexistence** — the pilot runs a separate Timer1 (count-up,

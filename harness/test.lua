@@ -59,6 +59,7 @@ system = {
     if spec.category == CATEGORY_ALWAYS_ON and spec.member == 0 then return alwaysOnSource end
     if spec.category == CATEGORY_NONE and spec.member == 0 then return noneSource end
     if spec.category == CATEGORY_LOGIC_SWITCH and spec.member == 2 and spec.options == 7 then return launchLogicSource end
+    if spec.category == CATEGORY_LOGIC_SWITCH and spec.name == "LS3" then return launchLogicSource end
     if spec.category == CATEGORY_TIMER and spec.member and spec.member >= 0 and spec.member <= 9 then return timerSourceForMember(spec.member) end
     if spec.name then return makeSource(spec.name) end
     return nil
@@ -1099,6 +1100,7 @@ check("(28) restored from the persisted identity alone (power-off recovery)", ft
 -- for now, the identity is kept for the next init, and the pilot is told
 ft:startCondition(noneSource)
 core.S.cfg.pausedTimerCat = CATEGORY_LOGIC_SWITCH; core.S.cfg.pausedTimerMember = 2; core.S.cfg.pausedTimerOptions = 0
+core.S.cfg.pausedTimerSrcName = nil
 core.S.pausedTimer = nil; core.S.pausedSrc = nil
 core.S.status = nil
 core.resumeFlightTimer()
@@ -1111,6 +1113,39 @@ core.S.cfg.pausedTimerOptions = 7
 core.resumeFlightTimer()
 check("(28) the retry with a resolvable identity restores it and clears the record",
   ftCond() == "LS3" and core.S.cfg.pausedTimerCat == nil, ftCond())
+-- by-name route: the numbers on record don't resolve, the name does
+ft:startCondition(noneSource)
+core.S.cfg.pausedTimerCat = CATEGORY_LOGIC_SWITCH; core.S.cfg.pausedTimerMember = 2; core.S.cfg.pausedTimerOptions = 0
+core.S.cfg.pausedTimerSrcName = "LS3"
+core.S.pausedTimer = nil; core.S.pausedSrc = nil
+core.resumeFlightTimer()
+check("(28) restored by NAME when the numeric lookups find nothing", ftCond() == "LS3" and core.S.cfg.pausedTimerCat == nil, ftCond())
+-- live-view hypothesis: the object startCondition() returns describes the
+-- timer's CURRENT setting, so after the pause it reads "---". It must be
+-- rejected as a candidate (never set "---" back as "the original") and
+-- the restore must still succeed by lookup.
+local liveCond = launchLogicSource
+local liveView = { name = function() return liveCond:name() end, category = function() return liveCond:category() end,
+                   member = function() return liveCond:member() end, options = function() return liveCond:options() end }
+local liveTimer = { name = function() return "LiveRef" end,
+  startCondition = function(self, ...) if select("#", ...) == 0 then return liveView end liveCond = ... end }
+fakeTimers[#fakeTimers + 1] = liveTimer
+core.S.cfg.pauseTimerName = "LiveRef"
+core.S.game = nil; core.S.screen = core.SCREEN.SETUP
+core.startGame()
+check("(28) live-view timer paused, and its name was captured before the switch-off",
+  liveCond:name() == "---" and core.S.cfg.pausedTimerSrcName == "LS3", tostring(core.S.cfg.pausedTimerSrcName))
+core.onClose()
+check("(28) live-view timer restored by lookup, stale captured object rejected",
+  liveCond:name() == "LS3" and core.S.cfg.pausedTimerCat == nil, liveCond:name())
+table.remove(fakeTimers)
+core.S.cfg.pauseTimerName = "FlightTime"
+-- every attempt is on record in Files/diag.csv
+local df = io.open("Files/diag.csv", "r")
+local dtxt = df and df:read("a") or ""
+if df then df:close() end
+check("(28) diag.csv records pauses, restores and the rejected candidate",
+  dtxt:find("pause", 1, true) and dtxt:find("RESTORED", 1, true) and dtxt:find("unusable", 1, true) ~= nil)
 -- disabled / missing: nothing happens, nothing crashes
 core.S.cfg.pauseTimerName = "NoSuchTimer"
 core.S.game = nil; core.S.screen = core.SCREEN.SETUP

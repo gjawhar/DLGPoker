@@ -175,6 +175,7 @@ local function defaults()
     pausedTimerCat = nil,
     pausedTimerMember = nil,
     pausedTimerOptions = nil,
+    pausedTimerSrcName = nil,
     landingSwitchName = "LANDING_MODE",   -- Lua-timed default (S6.4)
     landingMode   = "lua",                -- "lua" | "native" (LANDED_STABLE)
     -- 1.0s (pilot request, 2026-09, field test): a quick brake tap in
@@ -618,6 +619,15 @@ end
 -- otherwise it stays for another try at the next init and the pilot is
 -- told. Missing timer, blank name, or an unreadable start condition:
 -- silently do nothing, both ways.
+--
+-- 2026-09-30: that diagnosis was wrong in one respect -- the X14's own
+-- config.csv shows the template's condition is cat 13 / member 20 /
+-- OPTIONS 0, so the original lookup had the right three numbers and
+-- still didn't restore, and 1.1.0's record was still on file after a
+-- game. Cause unknown from the desk. So the restore now tries every
+-- route to the original Source (the captured object, three lookups, and
+-- the by-name lookup already proven for the launch switch), verifies
+-- each by read-back, and logs every step to Files/diag.csv.
 local function sourceIdentity(src)
   local okC, cat = pcall(function() return src:category() end)
   local okM, mem = pcall(function() return src:member() end)
@@ -626,12 +636,29 @@ local function sourceIdentity(src)
   if not (okO and type(opt) == "number") then opt = 0 end
   return cat, mem, opt
 end
+local function describeSource(src)
+  if src == nil then return "nil" end
+  if type(src) == "number" then return "number " .. tostring(src) end
+  local okN, name = pcall(function() return src:name() end)
+  local cat, mem, opt = sourceIdentity(src)
+  return string.format("%s cat=%s member=%s options=%s", okN and tostring(name) or "?", tostring(cat), tostring(mem), tostring(opt))
+end
+-- Files/diag.csv: one row per pause / restore attempt, so a restore that
+-- fails on a radio says exactly how (which lookup, the setter's error
+-- text, what the timer read back as). Added 2026-09-30 after the X14's
+-- config.csv showed a paused identity (cat 13, member 20, options 0)
+-- still on record with no way to tell why. Never throws.
+local function diag(event, detail)
+  pcall(appendRow, "diag", { tostring(os.time()), tostring(core.VERSION), event,
+    (tostring(detail):gsub("[,\r\n]", ";")) })
+end
 local function clearPausedTimer()
   S.pausedTimer = nil
   S.pausedSrc = nil
   S.cfg.pausedTimerCat = nil
   S.cfg.pausedTimerMember = nil
   S.cfg.pausedTimerOptions = nil
+  S.cfg.pausedTimerSrcName = nil
   core.saveConfig()
 end
 local function pauseFlightTimer()
@@ -644,39 +671,75 @@ local function pauseFlightTimer()
   local cat, mem, opt = sourceIdentity(cur)
   if cat == nil then return end
   if cat == (rawget(_G, "CATEGORY_NONE") or 0) then return end   -- already off; nothing to pause or restore
+  -- Read everything off the Source BEFORE switching the timer off: if
+  -- the object turns out to be a live view of the timer's own setting
+  -- rather than a copy, it will describe "---" afterwards.
+  local okN, srcName = pcall(function() return cur:name() end)
+  if not (okN and type(srcName) == "string" and srcName ~= "" and not srcName:find("[,\r\n]")) then srcName = nil end
+  local was = describeSource(cur)
   local none = noneSource()
   if not none then return end
-  local okSet = pcall(function() t:startCondition(none) end)
-  if not okSet then return end
+  local okSet, errSet = pcall(function() t:startCondition(none) end)
+  if not okSet then diag("pause", name .. " FAILED to switch off: " .. tostring(errSet)) return end
   S.pausedTimer = t
   S.pausedSrc = cur
   S.cfg.pausedTimerCat = cat
   S.cfg.pausedTimerMember = mem
   S.cfg.pausedTimerOptions = opt
+  S.cfg.pausedTimerSrcName = srcName
   core.saveConfig()
+  diag("pause", name .. " was " .. was .. "; captured object now reads " .. describeSource(cur))
 end
 function core.resumeFlightTimer()
   local cat, mem = S.cfg.pausedTimerCat, S.cfg.pausedTimerMember
   if cat == nil or mem == nil then S.pausedTimer = nil S.pausedSrc = nil return end
+  local opt, srcName = S.cfg.pausedTimerOptions or 0, S.cfg.pausedTimerSrcName
   local t = S.pausedTimer or getTimerByName(S.cfg.pauseTimerName)
-  if not t then clearPausedTimer() return end   -- renamed/deleted meanwhile: nothing to put back
-  local src = S.pausedSrc
-  if not src then
-    local ok, found = pcall(system.getSource, { category = cat, member = mem, options = S.cfg.pausedTimerOptions or 0 })
-    if ok and found ~= nil and type(found) ~= "number" then src = found end
+  if not t then   -- renamed/deleted meanwhile: nothing to put back
+    diag("restore", tostring(S.cfg.pauseTimerName) .. " not found; record dropped")
+    clearPausedTimer()
+    return
   end
+  local function matches(src)
+    if src == nil or type(src) == "number" then return false end
+    local c, m = sourceIdentity(src)
+    return c == cat and m == mem
+  end
+  -- Candidates, most direct first. Each must itself read as the original
+  -- (category + member) before it is ever set on the pilot's timer.
+  local tries = {}
+  local function offer(label, src)
+    if matches(src) then tries[#tries + 1] = { label, src }
+    else diag("restore", label .. " unusable: " .. describeSource(src)) end
+  end
+  if S.pausedSrc then offer("captured object", S.pausedSrc) end
+  local function lookup(label, spec)
+    local ok, found = pcall(system.getSource, spec)
+    if ok then offer(label, found) else diag("restore", label .. " lookup error: " .. tostring(found)) end
+  end
+  lookup("category+member+options", { category = cat, member = mem, options = opt })
+  lookup("category+member", { category = cat, member = mem })
+  if srcName then
+    -- By name within the category: the lookup this app already relies on
+    -- for MOM_LAUNCH / ZOOM_MODE / LANDING_MODE on real hardware.
+    lookup("category+name", { category = cat, name = srcName })
+    lookup("name", srcName)
+  end
+
   local restored = false
-  if src then
-    pcall(function() t:startCondition(src) end)
+  for i = 1, #tries do
+    local label, src = tries[i][1], tries[i][2]
+    local okSet, errSet = pcall(function() t:startCondition(src) end)
     local okR, rb = pcall(function() return t:startCondition() end)
-    if okR and rb ~= nil and type(rb) ~= "number" then
-      local rc, rm = sourceIdentity(rb)
-      restored = (rc == cat and rm == mem)
-    end
+    local good = okSet and okR and matches(rb)
+    diag("restore", label .. (okSet and ": set ok" or (": set ERROR " .. tostring(errSet)))
+      .. "; reads back " .. (okR and describeSource(rb) or "ERROR") .. (good and " -> RESTORED" or " -> no"))
+    if good then restored = true break end
   end
   if restored then
     clearPausedTimer()
   else
+    if #tries == 0 then diag("restore", "no usable candidate for cat=" .. tostring(cat) .. " member=" .. tostring(mem)) end
     S.pausedTimer = nil
     S.pausedSrc = nil
     core.setStatus("could not restore " .. tostring(S.cfg.pauseTimerName) .. " - check SYSTEM > TIMERS")
