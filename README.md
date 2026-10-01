@@ -157,9 +157,9 @@ voice announcements well.
    Lua scripts** and select the ZIP.
 3. Reboot the radio. DLG Poker is a System Tool, so it appears in the System
    menu as "DLG Poker" (no widget/screen assignment needed).
-4. Open it once to set the Timer/Landing detection/Controls options in
-   Settings (see above) — the one-time `SYSTEM > TIMERS` step is required
-   before it will actually count down.
+4. Open it. The first time, it creates its `PokerTimer` and tells you so;
+   press CONTINUE and play. Landing detection and Controls can be adjusted
+   in Settings (see above), but the defaults suit the DLG template.
 
 Updating this way keeps your game log: the installer only writes the code
 files listed in the manifest.
@@ -210,7 +210,7 @@ two calls Ethos delivers per tap can never register as two presses. A
 few known gaps are tracked in
 [`CLAUDE.md`](./CLAUDE.md#known-open-items-as-of-last-session) (e.g.
 X20RS hardware behavior for one timer API path is still unconfirmed, and
-the log screen's per-game detail view isn't built yet). Version `1.0.1`.
+the log screen's per-game detail view isn't built yet). Version `1.1.0`.
 
 ## Development
 

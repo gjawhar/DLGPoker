@@ -18,7 +18,7 @@
 --     confirmed, not assumed
 
 local core = {}
-core.VERSION = "1.0.1"
+core.VERSION = "1.1.0"
 
 -- ---------------------------------------------------------------- constants
 
