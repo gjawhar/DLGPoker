@@ -148,36 +148,41 @@ voice announcements well.
 
 ## Installation
 
-### Install with Ethos Suite
+### Install with FrSky Suite
 
-1. Prepare a ZIP file containing the final folder structure directly: the
-   archive's top-level path should be `scripts/PokerTimer/...`, not
-   wrapped in an extra parent folder.
-2. In Ethos Suite, open the **Lua Library** tab.
-3. Choose **Install lua script** and select the ZIP file.
-4. Let Ethos Suite copy the script to the radio, then reboot — DLG Poker
-   is a System Tool, so it appears in the System menu as "DLG Poker" (no
-   widget/screen assignment needed).
-5. Open it once to set the Timer/Landing detection/Controls options in
+1. Download the release ZIP from the
+   [Releases page](https://github.com/gjawhar/DLGPoker/releases). It carries
+   the `ethos_lua_manifest.json` that FrSky Suite's Lua installer requires.
+2. In FrSky Suite, connect the radio, open the Lua page, choose **Install
+   Lua scripts** and select the ZIP.
+3. Reboot the radio. DLG Poker is a System Tool, so it appears in the System
+   menu as "DLG Poker" (no widget/screen assignment needed).
+4. Open it once to set the Timer/Landing detection/Controls options in
    Settings (see above) — the one-time `SYSTEM > TIMERS` step is required
    before it will actually count down.
 
-ZIP structure for Ethos Suite:
+Updating this way keeps your game log: the installer only writes the code
+files listed in the manifest.
+
+ZIP structure:
 
 ```
-scripts/
-└── PokerTimer/
-    ├── main.lua
-    ├── core.lua
-    ├── draw.lua
-    ├── screen.lua
-    ├── config.lua
-    ├── pokertimer.png
-    └── Files/
+ethos_lua_manifest.json
+PokerTimer/
+├── main.lua
+├── core.lua
+├── draw.lua
+├── screen.lua
+├── config.lua
+├── pokertimer.png
+└── Files/
 ```
 
 `Files/` must exist (even empty) because the tool stores its game log
 there automatically as it runs.
+
+Build it with `python3 tools/make_zip.py`, which also checks the result
+against FrSky Suite's rules.
 
 ### Install manually via the SD card or internal storage
 
