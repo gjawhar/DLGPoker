@@ -32,7 +32,7 @@ voice announcements well.
   </tr>
   <tr>
     <td><img src="docs/screenshots/1_first_run.png" alt="One-time setup screen: PokerTimer created"><br><sub><b>First run.</b> DLG Poker creates its own <code>PokerTimer</code> and tells you once.</sub></td>
-    <td></td>
+    <td><img src="docs/screenshots/10_exit_confirm.png" alt="Exit confirmation: EXIT or RETURN TO GAME"><br><sub><b>Leaving mid-game.</b> RTN asks first. RETURN TO GAME carries on; EXIT ends the game.</sub></td>
   </tr>
 </table>
 
@@ -110,11 +110,15 @@ voice announcements well.
 7. After every bet in the game is resolved (or the window runs out), a
    summary shows each bet's result and the total score, logged for later
    review (recent games, best game, running average).
-8. **RTN / EXIT ends the game.** Leave the tool at any point and the game
-   is over: if you'd thrown at least once it's logged as it stands (bets
-   you never got to are marked unresolved), a game with no throw in it is
+8. **RTN during a game asks before leaving.** A confirmation offers two
+   keys: **RETURN TO GAME** (also RTN again, or just throw) carries on
+   exactly where you left off, and nothing was paused in the meantime —
+   a bet in the air keeps counting. **EXIT** ends the game and closes the
+   tool: if you'd thrown at least once it's logged as it stands (bets you
+   never got to are marked unresolved), a game with no throw in it is
    simply dropped, and the next time you open DLG Poker it starts fresh
    on the setup screen. The radio's timers are put back as they were.
+   With no game in progress, RTN leaves straight away.
 
 ## Settings
 
@@ -210,7 +214,7 @@ two calls Ethos delivers per tap can never register as two presses. A
 few known gaps are tracked in
 [`CLAUDE.md`](./CLAUDE.md#known-open-items-as-of-last-session) (e.g.
 X20RS hardware behavior for one timer API path is still unconfirmed, and
-the log screen's per-game detail view isn't built yet). Version `1.1.0`.
+the log screen's per-game detail view isn't built yet). Version `1.2.0`.
 
 ## Development
 

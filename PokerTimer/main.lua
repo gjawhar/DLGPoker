@@ -50,6 +50,15 @@ local function wakeup(widget)
     core.recoverFromWakeupError()
     core.setStatus("internal error - see log: " .. tostring(err))
   end
+  -- EXIT chosen on the exit confirmation: the game has already been
+  -- ended (core.confirmExit), now leave the tool. system.exit() is in
+  -- the Lua reference since 1.1.0 ("Exit the current script"); pcall'd
+  -- so that if it is missing or refuses, the pilot simply stays on the
+  -- fresh SETUP screen and RTN leaves from there.
+  if core.takeExitRequest() then
+    pcall(screen.reset)
+    pcall(function() system.exit() end)
+  end
   lcd.invalidate()
 end
 

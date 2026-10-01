@@ -586,6 +586,30 @@ a bust so a reopen + brake can't phantom-hit" logic is gone -- there is
 no game left to score into. A hard power-off never reaches `close()`;
 `init()`'s `resumeFlightTimer()` covers the FlightTime half of that.
 
+**RTN asks first (2026-09-30, v1.2.0).** The pilot found the above
+jarring on the radio: one RTN and the game was gone. RTN on LIVE with a
+game now opens an exit confirmation instead of leaving
+(`screen.event` returns true, `core.askExit()` sets `S.exitConfirm`).
+`paintExitConfirm()` replaces the LIVE body; the footer row becomes
+`EXIT | - | - | RETURN TO GAME` (FS1 / FS4, wheel flips between the two,
+ENTER or a tap picks, default focus RETURN TO GAME). RTN again =
+RETURN TO GAME, like any Ethos dialog. The game is NOT paused under the
+question — bet timer, landing detection and the window clock all keep
+running, and a "BET TIMER RUNNING" badge says so. It closes itself on a
+throw (launch rising edge), when the window runs out, and on a new
+game. While it is up `core.wakeup()` routes FS1 → `confirmExit()`, FS4 →
+`cancelExit()`, FS2/FS3 → nothing, and `askExit()` drops pending short
+presses so a switch already held can't answer on release. EXIT =
+`core.confirmExit()` → `core.onClose()` (everything above) + sets
+`S.exitPending`; `main.lua`'s wakeup sees `core.takeExitRequest()` and
+calls `system.exit()` (LuaDoc since 1.1.0, "Exit the current script"),
+pcall'd. **`system.exit()` closing a System Tool is NOT yet confirmed on
+hardware** — if it does nothing, the pilot is on a fresh SETUP and RTN
+leaves from there. RTN on SETUP / SUMMARY still leaves immediately, and
+`close()` by any other route still ends the game without asking.
+Harness Test 29; `harness/render.lua` drives the real `screen.event`
+path (RTN, wheel, ENTER) with asserts and renders `10_exit_confirm`.
+
 **Scope trap, again**: `core.onClose()` sits above `finalizeGame()` in
 the file, so `finalizeGame` is forward-declared (`local finalizeGame`
 above `onClose`, plain `function finalizeGame()` below assigns it).

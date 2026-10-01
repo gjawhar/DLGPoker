@@ -210,6 +210,21 @@ throw()
 pump(38)
 shot("4_in_flight")
 
+-- RTN mid-flight asks before leaving (pilot request, 2026-09-30). Driven
+-- through the real screen.event() path, and checked, so this render
+-- doubles as the execution test for it.
+local function rtn() return screen.event(KEY_RTN_FIRST) end
+local before = { idx = core.S.game.idx, score = core.S.game.score }
+assert(rtn() == true and core.S.exitConfirm, "RTN mid-game must open the question and be swallowed")
+shot("10_exit_confirm")
+screen.event(KEY_ROTARY_RIGHT, 1)        -- wheel: RETURN TO GAME -> EXIT
+screen.event(KEY_ROTARY_RIGHT, 1)        -- and back
+screen.event(KEY_ENTER_BREAK)            -- ENTER on RETURN TO GAME (the default)
+assert(not core.S.exitConfirm and core.S.game and core.S.game.idx == before.idx and core.S.game.armed,
+  "RETURN TO GAME must leave the game exactly as it was")
+assert(rtn() == true and core.S.exitConfirm, "RTN opens it again")
+assert(rtn() == true and not core.S.exitConfirm and core.S.game, "RTN on the question returns to the game")
+
 land()                                   -- landed at ~0:50 left: bust
 pump(0.5)
 shot("5_bust")
@@ -236,6 +251,20 @@ shot("7_summary")
 
 core.S.screen = core.SCREEN.LOG
 shot("8_log")
+
+-- EXIT through the real path: RTN, wheel to EXIT, ENTER
+core.S.screen = core.SCREEN.SUMMARY      -- (back from the LOG shot)
+assert(screen.event(KEY_RTN_FIRST) == false, "RTN on the summary leaves the tool, no question")
+core.onClose() screen.reset()
+core.startGame()
+throw() pump(3)
+assert(screen.event(KEY_RTN_FIRST) == true and core.S.exitConfirm)
+screen.event(KEY_ROTARY_LEFT, 1)         -- wheel: -> EXIT
+screen.event(KEY_ENTER_BREAK)
+assert(core.S.game == nil and core.S.screen == core.SCREEN.SETUP, "EXIT ends the game")
+assert(core.takeExitRequest() == true, "EXIT asks main.lua to close the tool")
+screen.reset()
+assert(screen.event(KEY_RTN_FIRST) == false, "RTN on SETUP leaves the tool, no question")
 
 -- night mode, mid-flight
 core.onClose()

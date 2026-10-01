@@ -1123,6 +1123,83 @@ core.startGame()
 check("(28) blank pause timer name disables the feature", core.S.cfg.pausedTimerCat == nil and core.S.game ~= nil)
 core.onClose()
 
+-- ---- Test 29: exit confirmation (pilot request, 2026-09-30) -- RTN
+-- during a game asks first. Nothing is lost until EXIT; RETURN TO GAME
+-- carries on exactly where the game was; the question owns FS1-FS4
+-- while it is up; a throw dismisses it; EXIT ends the game and asks
+-- main.lua to close the tool, exactly once.
+core.S.cfg.pauseTimerName = "FlightTime"
+for _, n in ipairs({ "FS1", "FS2", "FS3", "FS4", "MOM_LAUNCH", "ZOOM_MODE", "LANDING_MODE" }) do setSrc(n, -100) end
+core.S.game = nil; core.S.screen = core.SCREEN.SETUP
+check("(29) no game: askExit refuses, RTN just leaves", core.askExit() == false and not core.S.exitConfirm)
+core.wakeup()
+core.S.screen = core.SCREEN.LIVE
+core.S.game = freshGame(false)
+core.S.game.editMin, core.S.game.editSec = 1, 30
+core.wakeup()
+check("(29) in a game: askExit puts the question up", core.askExit() == true and core.S.exitConfirm == true)
+-- FS2/FS3 are dead and FS1 must not bump MIN while the question is up
+setSrc("FS2", 100); core.wakeup(); tick(0.05); setSrc("FS2", -100); core.wakeup()
+setSrc("FS3", 100); core.wakeup(); tick(0.05); setSrc("FS3", -100); core.wakeup()
+check("(29) FS2/FS3 do nothing while the question is up",
+  core.S.exitConfirm == true and core.S.game.editMin == 1 and core.S.game.editSec == 30 and core.S.game.armed == false,
+  "min=" .. tostring(core.S.game.editMin) .. " sec=" .. tostring(core.S.game.editSec))
+-- FS4 = RETURN TO GAME: nothing about the game changed
+setSrc("FS4", 100); core.wakeup(); tick(0.05); setSrc("FS4", -100); core.wakeup()
+check("(29) FS4 returns to the game, untouched",
+  not core.S.exitConfirm and core.S.game ~= nil and core.S.screen == core.SCREEN.LIVE
+  and core.S.game.editMin == 1 and core.S.game.editSec == 30 and core.S.game.idx == 1)
+check("(29) returning does not ask main.lua to close the tool", core.takeExitRequest() == false)
+-- a switch already down when the question appears can't answer it on release
+setSrc("FS1", 100); core.wakeup()
+core.askExit()
+setSrc("FS1", -100); core.wakeup()
+check("(29) a switch held from before the question does not answer it", core.S.exitConfirm == true and core.S.game ~= nil)
+core.cancelExit()
+-- a throw dismisses the question and the bet runs as normal
+core.askExit()
+setSrc("ZOOM_MODE", -100)
+setSrc("MOM_LAUNCH", 100); core.wakeup()
+check("(29) a throw dismisses the question", not core.S.exitConfirm)
+setSrc("ZOOM_MODE", 100)
+setSrc("MOM_LAUNCH", -100); core.wakeup()
+setSrc("ZOOM_MODE", -100); core.wakeup()
+tick(5)
+check("(29) ...and the bet is armed and counting", core.S.game.armed == true and core.liveTimerValue() > 80,
+  tostring(core.liveTimerValue()))
+-- mid-flight: the question does not stop the timer or the game
+core.askExit()
+tick(10); core.wakeup()
+check("(29) the bet timer keeps running under the question",
+  core.S.exitConfirm == true and core.liveTimerValue() < 80 and core.liveTimerValue() > 60, tostring(core.liveTimerValue()))
+-- FS1 = EXIT: game ended and logged (it had a throw), fresh SETUP, close requested once
+local logged29 = gamesLogged()
+setSrc("FS1", 100); core.wakeup(); tick(0.05); setSrc("FS1", -100); core.wakeup()
+check("(29) FS1 exits: game ended and logged, back on SETUP",
+  core.S.game == nil and core.S.screen == core.SCREEN.SETUP and not core.S.exitConfirm and gamesLogged() == logged29 + 1)
+check("(29) timer zeroed and switched off by EXIT", math.abs(core.liveTimerValue() or 0) < 1 and startCondName() == "---", startCondName())
+check("(29) EXIT asks main.lua to close the tool, exactly once",
+  core.takeExitRequest() == true and core.takeExitRequest() == false)
+-- EXIT with nothing thrown: dropped, not logged
+core.S.screen = core.SCREEN.LIVE; core.S.game = freshGame(false)
+core.askExit(); logged29 = gamesLogged()
+core.confirmExit()
+check("(29) EXIT on an untouched game drops it without logging",
+  core.S.game == nil and gamesLogged() == logged29 and core.takeExitRequest() == true)
+-- the window running out underneath ends the game normally; no stale question on the next game
+core.S.screen = core.SCREEN.LIVE; core.S.game = freshGame(false)
+core.S.game.bets[1].attempts = 1
+core.askExit()
+core.S.game.deadline = os.time() - 1
+core.wakeup()
+check("(29) window expiry under the question goes to the summary and clears it",
+  core.S.screen == core.SCREEN.SUMMARY and not core.S.exitConfirm)
+core.S.game = nil; core.S.screen = core.SCREEN.SETUP
+core.startGame()
+check("(29) a new game never opens with a stale question", core.S.game ~= nil and not core.S.exitConfirm)
+check("(29) confirmExit without a question up is a no-op", (function() core.confirmExit() return core.S.game ~= nil end)())
+core.onClose()
+
 print("")
 if failures == 0 then print("ALL TESTS PASSED")
 else print(failures .. " TEST(S) FAILED") os.exit(1) end

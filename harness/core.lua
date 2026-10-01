@@ -18,7 +18,7 @@
 --     confirmed, not assumed
 
 local core = {}
-core.VERSION = "1.1.0"
+core.VERSION = "1.2.0"
 
 -- ---------------------------------------------------------------- constants
 
@@ -845,15 +845,25 @@ end
 -- syntax-passes-runtime-fails trap this project documented after the
 -- draw.lua incident (and hit in this very function once, Test 26).
 local finalizeGame
+
+-- Has anything been thrown in this game yet? Decides logged-vs-dropped
+-- when a game ends early, and what the exit confirmation tells the pilot.
+function core.gamePlayed()
+  local g = S.game
+  if not g then return false end
+  for i = 1, g.betCount do
+    local b = g.bets[i]
+    if b.result ~= "pending" or (b.attempts or 0) > 0 then return true end
+  end
+  return false
+end
+
 function core.onClose()
   local g = S.game
+  S.exitConfirm = nil
+  S.exitPending = nil
   if g and S.screen == SCREEN.LIVE then
-    local played = false
-    for i = 1, g.betCount do
-      local b = g.bets[i]
-      if b.result ~= "pending" or (b.attempts or 0) > 0 then played = true break end
-    end
-    if played then finalizeGame() end
+    if core.gamePlayed() then finalizeGame() end
   end
   S.game = nil
   S.screen = SCREEN.SETUP
@@ -866,6 +876,51 @@ function core.onClose()
   timerSet(0)
   timerReset()
   core.resumeFlightTimer()
+end
+
+-- ---------------------------------------------------------------- exit confirmation
+--
+-- Pilot request (2026-09-30): RTN ending the game outright was jarring
+-- -- one accidental press and the game was gone, with no way back in.
+-- RTN during a game now ASKS first: screen.lua shows a confirmation
+-- with two keys, EXIT and RETURN TO GAME, and nothing is lost until
+-- EXIT is chosen. The game keeps running underneath the whole time
+-- (the bet timer, landing detection, the window clock) -- the question
+-- only owns the screen and the four function switches.
+--
+--   askExit()      RTN on LIVE with a game: put the question up.
+--   cancelExit()   RETURN TO GAME / RTN again: carry on, nothing changed.
+--   confirmExit()  EXIT: end the game exactly as onClose() does, then
+--                  ask main.lua to close the tool (takeExitRequest()).
+--
+-- A throw also dismisses it (handled in wakeup): a pilot who brushed RTN
+-- and never noticed must not launch into a screen that hides the bet.
+-- Pending short presses are dropped on the way in, so a switch that was
+-- already down when the question appeared can't answer it on release.
+function core.askExit()
+  if not S.game or S.screen ~= SCREEN.LIVE then return false end
+  S.exitConfirm = true
+  for _, st in pairs(S.switches) do st.pendingShort = false end
+  return true
+end
+
+function core.cancelExit()
+  S.exitConfirm = nil
+end
+
+function core.confirmExit()
+  if not S.exitConfirm then return end
+  core.onClose()
+  S.exitPending = true
+end
+
+-- main.lua's wakeup() asks this every cycle; true exactly once per EXIT.
+-- If closing the tool isn't possible on this firmware the pilot is left
+-- on a fresh SETUP screen, where RTN leaves the tool the ordinary way.
+function core.takeExitRequest()
+  if not S.exitPending then return false end
+  S.exitPending = nil
+  return true
 end
 
 -- ---------------------------------------------------------------- game lifecycle
@@ -900,6 +955,7 @@ function core.startGame()
   for i = 1, g.betCount do g.bets[i] = newBet(i) end
   S.game = g
   S.screen = SCREEN.LIVE
+  S.exitConfirm = nil
   pauseFlightTimer()
 end
 
@@ -1002,6 +1058,7 @@ end
 function finalizeGame()   -- assigns the forward-declared local above onClose
   local g = S.game
   if not g then return end
+  S.exitConfirm = nil
   for i = g.idx, g.betCount do
     local b = g.bets[i]
     if b.result == "pending" then b.result = "unresolved" end
@@ -1595,7 +1652,7 @@ function core.wakeup()
       local rising  = (S.prevLaunch <= 0 and v > 0)
       local falling = (S.prevLaunch > 0 and v <= 0)
       S.prevLaunch = v
-      if rising then handleLaunchRise() end
+      if rising then S.exitConfirm = nil handleLaunchRise() end
       if falling then handleLaunchFall() end
     end
   end
@@ -1636,7 +1693,24 @@ function core.wakeup()
     end, false, nil)
     return
   end
-  if S.screen ~= SCREEN.SETUP and S.screen ~= SCREEN.LIVE then return end
+  if S.screen ~= SCREEN.SETUP and S.screen ~= SCREEN.LIVE then S.exitConfirm = nil return end
+
+  -- Exit confirmation up (see core.askExit): FS1 = EXIT, FS4 = RETURN TO
+  -- GAME, matching the two footer keys; FS2/FS3 do nothing but are still
+  -- polled so their edge state stays current. If the game ended on its
+  -- own underneath (window ran out), the question is moot.
+  if S.exitConfirm then
+    if not S.game or S.screen ~= SCREEN.LIVE then
+      S.exitConfirm = nil
+    else
+      local nothing = function() end
+      pollRole("min", S.minSwitchSrc, core.confirmExit, false, nil)
+      pollRole("sec", S.secSwitchSrc, nothing, false, nil)
+      pollRole("allin", S.allinSwitchSrc, nothing, false, nil)
+      pollRole("confirm", S.confirmSwitchSrc, core.cancelExit, false, nil)
+      return
+    end
+  end
 
   pollRole("min", S.minSwitchSrc, core.bumpMin, true, core.resetMin)
   pollRole("sec", S.secSwitchSrc, core.bumpSec, true, core.resetSec)

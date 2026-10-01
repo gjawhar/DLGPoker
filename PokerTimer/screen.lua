@@ -122,6 +122,9 @@ local function keysFor(scr)
   end
   if scr == SCREEN.LIVE then
     local g = core.S.game
+    -- Exit confirmation (pilot request, 2026-09-30): RTN during a game
+    -- asks first. Two keys, FS1- and FS4-aligned, nothing else.
+    if g and core.S.exitConfirm then return { "EXIT", "-", "-", "RETURN TO GAME" } end
     if g and g.armed then
       -- A hit auto-advances in core.lua now (pollLanding), so this
       -- combination (armed + result=="hit") can't actually be observed
@@ -157,6 +160,7 @@ end
 local function extraFocusTargets(scr)
   if scr == SCREEN.LIVE then
     local g = core.S.game
+    if g and core.S.exitConfirm then return {} end
     if g and not g.armed then return { "min", "sec" } end
   end
   return {}
@@ -483,12 +487,87 @@ end
 
 -- ---------------------------------------------------------------- S2 live
 
+-- Exit confirmation (pilot request, 2026-09-30). Replaces the LIVE body
+-- while core.S.exitConfirm is set; the footer row carries the two
+-- answers (see keysFor). Says what each answer does and what is at
+-- stake right now -- including a bet still counting down, because the
+-- game keeps running underneath. Every text height is measured.
+local savedLiveFocus = nil   -- LIVE's footer focus from before the question
+local function openExitConfirm()
+  if not core.askExit() then return false end
+  if savedLiveFocus == nil then savedLiveFocus = focus[SCREEN.LIVE] or 1 end
+  focus[SCREEN.LIVE] = 4       -- RETURN TO GAME: the safe answer is the default
+  rotaryEditField = nil
+  return true
+end
+-- The question can also be closed from core.lua (FS1/FS4, a throw, the
+-- window running out), so the focus restore is a sync, not a callback.
+local function syncExitConfirm()
+  if savedLiveFocus ~= nil and not core.S.exitConfirm then
+    focus[SCREEN.LIVE] = savedLiveFocus
+    savedLiveFocus = nil
+  end
+end
+
+local function paintExitConfirm(w, h, t, g)
+  local bet = g.bets[g.idx]
+  local cy = CONTENT_TOP + 10
+  lcd.font(FONT_S)
+  local _, sH = lcd.getTextSize("0"); sH = (sH and sH > 0) and sH or 14
+  draw.color(t.dim2)
+  draw.text(12, cy, "GAME IN PROGRESS")
+  cy = cy + sH + 4
+
+  lcd.font(FONT_L)
+  local _, lH = lcd.getTextSize("0"); lH = (lH and lH > 0) and lH or 24
+  draw.color(t.txt)
+  draw.text(12, cy, "Exit DLG Poker?", w - 24)
+  cy = cy + lH + 8
+
+  -- What is at stake, as badges; wrap to a second row if they don't fit.
+  lcd.font(FONT_S)
+  local badges = {
+    { string.format("BET %d OF %d", g.idx, g.betCount), t.accent, t.accentBg },
+    { "SCORE " .. tostring(g.score) .. "s", t.accent, t.accentBg },
+    { "GAME LEFT " .. draw.mmss(g.deadline - os.time()), t.accent, t.accentBg },
+  }
+  local live = core.liveTimerValue()
+  if g.armed and bet and bet.attempts > 0 and bet.result == "pending" and live and live > 0 then
+    badges[#badges + 1] = { "BET TIMER RUNNING " .. draw.mmss(live), t.good, t.goodBg }
+  end
+  local bx, bh = 12, 0
+  for i = 1, #badges do
+    local bw, h1 = draw.badgeSize(badges[i][1])
+    if bx > 12 and bx + bw > w - 12 then bx = 12 cy = cy + h1 + 4 end
+    draw.badge(bx, cy, badges[i][1], badges[i][2], badges[i][3])
+    bx = bx + bw + 8
+    bh = h1
+  end
+  cy = cy + bh + 10
+
+  draw.dottedLine(12, cy, w - 24, t.marker)
+  cy = cy + 8
+
+  draw.color(t.txt)
+  if core.gamePlayed() then
+    draw.text(12, cy, "EXIT ends this game and saves it to the log as it stands.", w - 24)
+    cy = cy + sH + 2
+    draw.text(12, cy, "It can't be resumed.", w - 24)
+  else
+    draw.text(12, cy, "EXIT drops this game - nothing has been thrown yet.", w - 24)
+  end
+  cy = cy + sH + 8
+  draw.color(t.dim)
+  draw.text(12, cy, "RETURN TO GAME carries on exactly where you left off.", w - 24)
+end
+
 local function paintLive(w, h)
   local t = draw.theme()
   local g = core.S.game
   draw.chrome(w, "DLG Poker")
   draw.color(t.bg); lcd.drawFilledRectangle(0, CHROME_H, w, h - CHROME_H)
   if not g then return end
+  if core.S.exitConfirm then paintExitConfirm(w, h, t, g) return end
   local bet = g.bets[g.idx]
 
   -- SCORE as a badge, not plain text (pilot request, 2026-09, ThrowTrainer
@@ -1026,6 +1105,7 @@ end
 -- position, or a Settings form left open.
 function screen.reset()
   rotaryEditField = nil
+  savedLiveFocus = nil
   logTop = 1
   for k in pairs(focus) do focus[k] = 1 end
   if inForm then
@@ -1036,6 +1116,7 @@ end
 
 function screen.paint(w, h)
   if inForm then return end   -- form owns painting while open
+  syncExitConfirm()
   valueRects = {}   -- cleared every dispatched paint, not just SETUP/LIVE's
                      -- own -- otherwise a stale rect from whichever screen
                      -- was last shown would keep intercepting taps on a
@@ -1095,7 +1176,9 @@ local function activate(scr, i)
       config.build()
     end
   elseif scr == SCREEN.LIVE then
-    if label == "MIN" then toggleEditField("min")
+    if label == "EXIT" then core.confirmExit()
+    elseif label == "RETURN TO GAME" then core.cancelExit()
+    elseif label == "MIN" then toggleEditField("min")
     elseif label == "SEC" then toggleEditField("sec")
     elseif label == "ALL IN" then core.allIn()
     elseif label == "CANCEL" then core.cancelArm()
@@ -1129,6 +1212,7 @@ function screen.event(value, x, y, category)
   end
 
   local scr = core.S.screen
+  syncExitConfirm()
 
   -- Touch: hit-test against the rectangles paintKeys()/paintSetup()/
   -- paintLive() recorded this same frame.
@@ -1164,6 +1248,11 @@ function screen.event(value, x, y, category)
       return true
     end
     if scr == SCREEN.SETUP and core.S.timerNotice then return true end
+    -- Exit confirmation: two answers, any wheel movement flips between them.
+    if scr == SCREEN.LIVE and core.S.exitConfirm then
+      focus[scr] = (focus[scr] == 1) and 4 or 1
+      return true
+    end
     if rotaryEditField then
       -- In edit mode: scroll bumps the field directly, same granularity
       -- (whole minutes / 10s / 1 bet) as the footer key and the touch
@@ -1260,6 +1349,14 @@ function screen.event(value, x, y, category)
       return true
     end
     if scr == SCREEN.LOG then core.S.screen = SCREEN.SUMMARY return true end
+    -- Pilot request (2026-09-30): RTN during a game asks before leaving.
+    -- RTN again on the question is "no" -- back to the game, the same
+    -- way RTN closes any Ethos dialog. With no game in progress (SETUP,
+    -- SUMMARY) there is nothing to lose and RTN leaves the tool as usual.
+    if scr == SCREEN.LIVE and core.S.game then
+      if core.S.exitConfirm then core.cancelExit() else openExitConfirm() end
+      return true
+    end
     return false
   end
 
