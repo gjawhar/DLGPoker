@@ -162,12 +162,16 @@ function config.build()
     function() return (cfg().display == "night") and 2 or 1 end,
     function(v) cfg().display = (v == 2) and "night" or "day" core.saveConfig() end)
 
-  panel = form.addExpansionPanel("About")
+  -- Version in the title so it reads without opening; rows are text
+  -- buttons (press does nothing): static text cannot take focus and an
+  -- Ethos form only scrolls to follow focus, so on a short screen (Twin X
+  -- Lite) the opened panel's rows could not be reached (pilot, 2026-11-11).
+  panel = form.addExpansionPanel("About - DLG Poker " .. core.VERSION)
   panel:open(false)
   line = panel:addLine("Version")
-  form.addStaticText(line, nil, core.VERSION)
+  form.addTextButton(line, nil, core.VERSION, function() return true end)
   line = panel:addLine("Storage")
-  form.addStaticText(line, nil, core.S.dir or "unavailable")
+  form.addTextButton(line, nil, core.S.dir or "unavailable", function() return true end)
 end
 
 return config
